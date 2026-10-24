@@ -347,6 +347,7 @@ mw.util.addCSS(
 '.ge-r{padding:3px 6px;margin:2px 0;border-left:4px solid #ccc;font-size:12.5px}.ge-r.e{border-color:#d33;background:#fee7e6}.ge-r.w{border-color:#fc3;background:#fef6e7}.ge-r.i{border-color:#36c;background:#eaf3ff}.ge-r.o{border-color:#14866d;background:#d5fdf4}' +
 '.ge-toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#202122;color:#fff;padding:8px 14px;border-radius:4px;z-index:3000;max-width:80vw}.ge-toast.ge-bad{background:#b32424}' +
 '.ge-det{margin:8px 0;border-top:1px dashed #a2a9b1;padding-top:4px}.ge-ta{width:100%;height:70px;box-sizing:border-box;font-family:monospace}.ge-nav{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}' +
+'.ge-ov.ge-page{position:static;background:none;display:block}.ge-page .ge-box{width:100%;margin:0;border:1px solid #a2a9b1}.ge-page .ge-close{display:none}.ge-page .ge-body{overflow:visible}' +
 '.ge-tbl{border-collapse:collapse;font-size:12px}.ge-tbl td,.ge-tbl th{border:1px solid #c8ccd1;padding:2px 5px;vertical-align:top}');
 
 function setStatus(m) { S.el.status.textContent = m || ''; }
@@ -705,15 +706,22 @@ function buildUI() {
     h('button', { class: 'ge-btn', onclick: function () { dl('grandham-session-log.csv', ['row,type,qid,title'].concat((S.log || []).map(function (r) { return r.map(csvCell).join(','); })).join('\r\n')); } }, '⬇ session log')]),
     h('label', {}, [S.el.optRemove, ' remove values missing from form']), h('br'), h('label', {}, [S.el.optOver, ' overwrite existing labels/descriptions']), h('br'), h('label', {}, [S.el.optNext, ' auto-advance after save'])]);
   var box = h('div', { class: 'ge-box' }, [
-    h('div', { class: 'ge-head' }, [h('b', {}, '📚 Grandham Editor'), h('small', {}, 'WikiProject Books · Sahya Digital Conservation Foundation · Wiki Librarians Network'), h('span', { class: 'ge-sp' }), S.el.status, h('button', { onclick: function () { S.el.ov.style.display = 'none'; } }, '✕ Close')]),
+    h('div', { class: 'ge-head' }, [h('b', {}, '📚 Grandham Editor'), h('small', {}, 'WikiProject Books · Sahya Digital Conservation Foundation · Wiki Librarians Network'), h('span', { class: 'ge-sp' }), S.el.status, h('button', { class: 'ge-close', onclick: function () { S.el.ov.style.display = 'none'; } }, '✕ Close')]),
     h('div', { class: 'ge-body' }, [h('div', { class: 'ge-left' }, [load_, S.el.nav, S.el.info, S.el.form]), h('div', { class: 'ge-right' }, [acts, h('hr'), h('b', {}, 'Quality check'), S.el.res, h('hr'), h('b', {}, 'Saved this session'), S.el.log])])]);
   S.el.ov = h('div', { class: 'ge-ov', style: 'display:none' }, box); document.body.appendChild(S.el.ov); document.body.appendChild(dl_); document.body.appendChild(rg);
 }
-function openEditor(qid) {
-  if (!S.el.ov) buildUI(); S.el.ov.style.display = 'flex';
-  if (qid) { S.rows = [{ qid: qid, type: '', vals: {}, meta: {}, status: '' }]; S.i = -1; loadRow(0); }
+var PAGE = 'Special:BlankPage/GrandhamEditor';
+function mountPage() {
+  var c = document.getElementById('mw-content-text'); if (!c) return;
+  document.title = 'Grandham Editor – Wikidata';
+  var hd = document.getElementById('firstHeading'); if (hd) hd.textContent = 'Grandham Editor';
+  c.innerHTML = ''; buildUI(); S.el.ov.className = 'ge-ov ge-page'; S.el.ov.style.display = 'block'; c.appendChild(S.el.ov);
+  var q = new URLSearchParams(location.search), ids = q.get('qid') || q.get('ids');
+  if (ids) { try { S.rows = ingest(ids); S.i = -1; loadRow(0); } catch (e) { fail(e); } }
 }
-mw.util.addPortletLink('p-tb', '#', 'Grandham Editor', 't-grandham', 'Open Grandham Book Editor (#mlwsBookEditor)').addEventListener('click', function (e) {
-  e.preventDefault(); var pn = mw.config.get('wgPageName'); openEditor(/^Q\d+$/.test(pn) ? pn : null);
-});
+var pn = mw.config.get('wgPageName') || '';
+if (pn.toLowerCase() === PAGE.toLowerCase()) $(mountPage);
+else {
+  var link = mw.util.addPortletLink('p-tb', mw.util.getUrl(PAGE, /^Q\d+$/.test(pn) ? { qid: pn } : {}), 'Grandham Editor', 't-grandham', 'Open Grandham Book Editor (#mlwsBookEditor)');
+}
 });
