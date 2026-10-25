@@ -1,5 +1,5 @@
 /**
- * Grandham Editor (#mlwsBookEditor)
+ * Grandham Editor (#GrandhamEditor)
  * Wikidata user script: data model + quality checker + bulk-assisted editor for books
  * (Work items & Edition items).
  *
@@ -14,7 +14,7 @@
 mw.loader.using(['mediawiki.api', 'mediawiki.util']).then(function () {
 'use strict';
 
-var SUF = ' via Grandham Editor (#mlwsBookEditor)';
+var SUF = ' via Grandham Editor (#GrandhamEditor)';
 var api = new mw.Api();
 var Q = { edition: 'Q3331189', translation: 'Q21112633', work: 'Q47461344', human: 'Q5', male: 'Q6581097', female: 'Q6581072',
           india: 'Q668', raj: 'Q129286', ml: 'Q36236', en: 'Q1860', house: 'Q2085381', press: 'Q6500733' };
@@ -27,10 +27,12 @@ var PRE_FORM = [['Q8261', 'novel'], ['Q8253', 'fiction'], ['Q213051', 'non-ficti
   ['Q4184', 'autobiography'], ['Q35760', 'essay'], ['Q10916116', 'history book'], ['Q83790', 'textbook'], ['Q1279564', 'short story'],
   ['Q131539', "children's literature"], ['Q1164267', 'travelogue'], ['Q8162', 'linguistics'], ['Q179461', 'religious text'],
   ['Q2723546', 'Panchangam'], ['Q44342', 'legend'], ['Q7553', 'translation']];
+var PRICE_UNITS = [['Q80524', 'Indian rupee', '₹'], ['Q4917', 'US dollar', '$']];
 var PRE_MOVE = [['Q3523410', 'Manipravalam'], ['Q15580856', 'feminist movement'], ['Q2914617', 'Bhakti movement']];
 
 // t: W=work E=edition ; x: optional (hidden under "Optional fields") ; m: multiple values allowed
 var F = [
+ { pid: 'P31', name: 'instance of', dt: 'item', m: 1, col: 'instance_of', t: 'WE', pre: [['Q3331189', 'edition'], ['Q47461344', 'written work']], hint: 'type is taken from Wikidata; add others if needed' },
  { pid: 'P1476', name: 'title', dt: 'mono', col: 'title', t: 'WE', hint: 'Text + language code' },
  { pid: 'P1680', name: 'subtitle', dt: 'mono', col: 'subtitle', t: 'WE', hint: 'Text + language code' },
  { pid: 'P629', name: 'edition or translation of (work)', dt: 'item', col: 'work_qid', t: 'E', hint: 'Work item (P31 = written work)', find: 1 },
@@ -38,7 +40,7 @@ var F = [
  { pid: 'P98', name: 'editor', dt: 'item', m: 1, col: 'editor', t: 'WE', create: 'editor' },
  { pid: 'P655', name: 'translator', dt: 'item', m: 1, col: 'translator', t: 'WE', create: 'translator' },
  { pid: 'P407', name: 'language of work or name', dt: 'item', m: 1, col: 'language', t: 'WE', pre: PRE_LANG },
- { pid: 'P495', name: 'country of origin', dt: 'item', m: 1, col: 'country', t: 'WE', pre: PRE_CTRY },
+ { pid: 'P495', name: 'country of origin', dt: 'item', m: 1, col: 'country', t: 'W', pre: PRE_CTRY },
  { pid: 'P571', name: 'inception', dt: 'time', col: 'inception', t: 'W', hint: 'YYYY, YYYY-MM or YYYY-MM-DD' },
  { pid: 'P577', name: 'publication date', dt: 'time', col: 'publication_date', t: 'WE', hint: 'YYYY, YYYY-MM or YYYY-MM-DD' },
  { pid: 'P135', name: 'cultural movement', dt: 'item', m: 1, col: 'movement', t: 'W', pre: PRE_MOVE },
@@ -50,6 +52,7 @@ var F = [
  { pid: 'P872', name: 'printed by', dt: 'item', m: 1, col: 'printer', t: 'E', create: 'printer' },
  { pid: 'P195', name: 'collection', dt: 'item', m: 1, col: 'collection', t: 'E' },
  { pid: 'P1104', name: 'number of pages', dt: 'quantity', col: 'pages', t: 'E' },
+ { pid: 'P2284', name: 'price', dt: 'price', col: 'price', t: 'E', hint: 'number only · default ₹ INR' },
  { pid: 'P996', name: 'document file on Commons', dt: 'commons', col: 'commons_file', t: 'E', hint: 'File:Name.pdf' },
  { pid: 'P1957', name: 'Wikisource index page URL', dt: 'url', col: 'wikisource_index', t: 'E' },
  { pid: 'P953', name: 'work available at URL', dt: 'url', m: 1, col: 'url', t: 'E' },
@@ -66,7 +69,7 @@ var F = [
  { pid: 'P674', name: 'characters', dt: 'item', m: 1, col: 'character', t: 'W', x: 1 },
  { pid: 'P840', name: 'narrative location', dt: 'item', m: 1, col: 'narrative_location', t: 'W', x: 1 }
 ];
-F.forEach(function (f) { if (f.dt === 'item' && !f.create && ['P629', 'P747', 'P407', 'P495'].indexOf(f.pid) < 0) f.create = 'generic'; });
+F.forEach(function (f) { if (f.dt === 'item' && !f.create && ['P31', 'P629', 'P747', 'P407', 'P495'].indexOf(f.pid) < 0) f.create = 'generic'; });
 var FB = {}, COLMAP = {}, ALIAS = { ml: Q.ml, malayalam: Q.ml, en: Q.en, english: Q.en, india: Q.india, 'british raj': Q.raj, raj: Q.raj, 'british india': Q.raj };
 F.forEach(function (f) { FB[f.pid] = f; COLMAP[f.col] = f.pid; COLMAP[f.pid.toLowerCase()] = f.pid; });
 COLMAP.subtitle_lang = 'P1680_lang'; COLMAP.title_lang = 'P1476_lang';
@@ -130,6 +133,7 @@ function dateOk(s) {
   return true;
 }
 function normForm(f, x, lang) { // form value -> comparable key
+  if (f.dt === 'price') return String(+x) + '|' + (lang || 'Q80524');
   if (f.dt === 'item') return x.id;
   if (f.dt === 'mono') return lang + '|' + x;
   if (f.dt === 'quantity') return String(+x);
@@ -138,6 +142,7 @@ function normForm(f, x, lang) { // form value -> comparable key
 }
 function normClaim(f, c) {
   var s = c.mainsnak; if (s.snaktype !== 'value') return null; var v = s.datavalue.value;
+  if (f.dt === 'price') return String(+v.amount) + '|' + String(v.unit || '').split('/').pop();
   if (f.dt === 'item') return 'Q' + v['numeric-id'];
   if (f.dt === 'mono') return v.language + '|' + v.text;
   if (f.dt === 'time') return fmtTime(v);
@@ -149,6 +154,7 @@ function mkClaim(f, x, lang, id) {
   if (f.dt === 'item') dv = { type: 'wikibase-entityid', value: { 'entity-type': 'item', 'numeric-id': +x.id.slice(1) } };
   else if (f.dt === 'mono') dv = { type: 'monolingualtext', value: { text: x, language: lang } };
   else if (f.dt === 'time') dv = { type: 'time', value: toTime(x) };
+  else if (f.dt === 'price') dv = { type: 'quantity', value: { amount: '+' + (+x), unit: 'http://www.wikidata.org/entity/' + (lang || 'Q80524') } };
   else if (f.dt === 'quantity') dv = { type: 'quantity', value: { amount: (+x < 0 ? '' : '+') + (+x), unit: '1' } };
   else dv = { type: 'string', value: f.dt === 'commons' ? x.trim().replace(/^File:/i, '') : String(x).trim() };
   var c = { type: 'statement', rank: 'normal', mainsnak: { snaktype: 'value', property: f.pid, datavalue: dv } };
@@ -162,6 +168,7 @@ function entityToVals(e) {
       var s = c.mainsnak; if (s.snaktype !== 'value') return; var dv = s.datavalue.value;
       if (f.dt === 'item') out.push({ id: 'Q' + dv['numeric-id'] });
       else if (f.dt === 'mono') { if (!out.length) { out.push(dv.text); v[f.pid + '_lang'] = dv.language; } }
+      else if (f.dt === 'price') { out.push(String(+dv.amount)); v[f.pid + '_lang'] = String(dv.unit || '').split('/').pop(); }
       else if (f.dt === 'time') out.push(fmtTime(dv));
       else if (f.dt === 'quantity') out.push(String(+dv.amount));
       else out.push(dv);
@@ -229,8 +236,8 @@ function buildData(type, v, orig, opts) {
       .filter(function (s) { return !(oa[l] || []).some(function (x) { return x.value === s; }); });
     if (al.length) (data.aliases = data.aliases || {})[l] = al.map(function (s) { return { language: l, value: s, add: '' }; });
   });
-  var t31 = FB.P31 || { pid: 'P31', dt: 'item' };
-  if (!opts.only && (!orig || p31(orig).indexOf(Q[type]) < 0)) data.claims.push(mkClaim(t31, { id: Q[type] }));
+  var has = function (q) { return (v.P31 || []).some(function (x) { return x && x.id === q; }); };
+  if (!opts.only && !(type === 'work' ? has(Q.work) : (has(Q.edition) || has(Q.translation)))) v = Object.assign({}, v, { P31: (v.P31 || []).concat([{ id: Q[type] }]) });
   F.forEach(function (f) {
     if (!applies(f, type) || (opts.only && f.pid !== opts.only)) return;
     var lang = v[f.pid + '_lang'], want = (v[f.pid] || []).filter(function (x) { return f.dt === 'item' ? x.id : String(x).trim(); });
@@ -268,7 +275,7 @@ function deriveWork(v) {
   var n = (v.P393 || [''])[0]; if (v.P577 && (!n || n === '1')) w.P577 = v.P577.slice(); w.meta = {}; return w;
 }
 function deriveEdition(v, wq) {
-  var e = carry(v, ['P1476', 'P1476_lang', 'P1680', 'P1680_lang', 'P50', 'P98', 'P655', 'P407', 'P495', 'P577']); e.P629 = [{ id: wq }]; e.meta = {}; return e;
+  var e = carry(v, ['P1476', 'P1476_lang', 'P1680', 'P1680_lang', 'P50', 'P98', 'P655', 'P407', 'P577']); e.P629 = [{ id: wq }]; e.meta = {}; return e;
 }
 
 /* ---------- table parsing ---------- */
@@ -304,13 +311,14 @@ function ingest(text) {
       if (hd === 'qid' || hd === 'item') r.qid = (c.match(/Q\d+/i) || [''])[0].toUpperCase();
       else if (hd === 'type') r.type = c.toLowerCase();
       else if (/^(label|desc|alias)_(ml|en)$/.test(hd)) r.meta[hd] = c;
-      else if (hd === 'title_lang') lang.P1476 = c; else if (hd === 'subtitle_lang') lang.P1680 = c;
+      else if (hd === 'title_lang') lang.P1476 = c; else if (hd === 'subtitle_lang') lang.P1680 = c; else if (hd === 'price_unit') lang.P2284 = c;
       else if (COLMAP[hd]) raw[COLMAP[hd]] = c;
     });
     F.forEach(function (f) {
       var c = raw[f.pid]; if (c == null) return;
       if (f.dt === 'item') r.vals[f.pid] = c.split('|').map(tok).filter(Boolean);
       else if (f.dt === 'mono') { r.vals[f.pid] = [c]; r.vals[f.pid + '_lang'] = lang[f.pid] || (ML.test(c) ? 'ml' : 'en'); }
+      else if (f.dt === 'price') { var pu = lang.P2284 || c; r.vals[f.pid] = [c.replace(/[^\d.]/g, '')]; r.vals[f.pid + '_lang'] = /usd|dollar|\$|Q4917/i.test(pu) ? 'Q4917' : 'Q80524'; }
       else r.vals[f.pid] = c.split('|').map(function (s) { return s.trim(); }).filter(Boolean);
     });
     rows.push(r);
@@ -320,13 +328,13 @@ function ingest(text) {
 
 /* ---------- sample master file ---------- */
 var SAMPLE_COLS = ['type', 'qid', 'title', 'title_lang', 'subtitle', 'subtitle_lang', 'author', 'editor', 'translator', 'language', 'country', 'work_qid', 'edition_qids',
-  'inception', 'publication_date', 'form', 'movement', 'edition_number', 'place_of_publication', 'publisher', 'printer', 'collection', 'pages', 'commons_file',
+  'inception', 'publication_date', 'form', 'movement', 'edition_number', 'place_of_publication', 'publisher', 'printer', 'collection', 'pages', 'price', 'price_unit', 'commons_file',
   'wikisource_index', 'url', 'parts', 'isbn10', 'isbn13', 'oclc', 'openlibrary', 'topic', 'award', 'series', 'based_on', 'inspired_by', 'character', 'narrative_location',
   'label_ml', 'label_en', 'desc_ml', 'desc_en', 'alias_ml', 'alias_en'];
 var SAMPLE_ROWS = [
   { type: 'work', title: 'പ്രേമലേഖനം', title_lang: 'ml', author: 'വൈക്കം മുഹമ്മദ് ബഷീർ', language: 'malayalam', country: 'india', publication_date: '1943', form: 'novel|fiction', label_en: 'Premalekhanam' },
-  { type: 'edition', title: 'പ്രേമലേഖനം', title_lang: 'ml', author: 'വൈക്കം മുഹമ്മദ് ബഷീർ', language: 'malayalam', country: 'india', publication_date: '2001', edition_number: '5',
-    place_of_publication: 'Kozhikode', publisher: 'SAMPLE Publishing House', pages: '64', isbn10: '81-264-1234-8', isbn13: '978-81-264-1234-1' }
+  { type: 'edition', title: 'പ്രേമലേഖനം', title_lang: 'ml', author: 'വൈക്കം മുഹമ്മദ് ബഷീർ', language: 'malayalam', publication_date: '2001', edition_number: '5',
+    place_of_publication: 'Kozhikode', publisher: 'SAMPLE Publishing House', pages: '64', price: '40', price_unit: 'inr', isbn10: '81-264-1234-8', isbn13: '978-81-264-1234-1' }
 ];
 function sampleCsv() { return [SAMPLE_COLS.join(',')].concat(SAMPLE_ROWS.map(function (r) { return SAMPLE_COLS.map(function (c) { return csvCell(r[c]); }).join(','); })).join('\r\n'); }
 
@@ -355,7 +363,7 @@ mw.util.addCSS('.ge-info{font-size:11px;color:#54595d}.ge-save{flex:none;align-s
 '.ge-r.e{background:#fee7e6}.ge-r.w{background:#fef6e7}.ge-err{background:#fee7e6}.ge-warn{background:#fef6e7}.ge-legend{font-size:11px;color:#54595d}');
 mw.util.addCSS('.ge-links{display:inline-block;margin:0 0 0 8px}.ge-bub{display:inline-block;padding:1px 10px;margin-right:6px;border-radius:12px;font-size:12px;text-decoration:none;border:1px solid}' +
 '.ge-bub.wd{background:#cfe2ff;border-color:#6ea8fe;color:#084298}.ge-bub.ws{background:#fff3bf;border-color:#e0b100;color:#664d03}.ge-bub.cm{background:#d1e7dd;border-color:#75b798;color:#0a3622}.ge-bub.ge-off{background:#f1f1f1;border-color:#ccc;color:#888}' +
-'.ge-top{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start}.ge-topl{flex:1 1 400px;min-width:0}.ge-topr{flex:0 1 520px;border:1px solid #a2a9b1;padding:4px 8px}.ge-log{height:14em;line-height:1.4em;overflow-y:scroll;border:1px solid #a2a9b1;padding:2px 6px;font-size:12px;background:#fff;margin-top:3px}');
+'.ge-top{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start}.ge-topl{flex:1 1 400px;min-width:0}.ge-topr{flex:0 1 520px;border:1px solid #a2a9b1;padding:4px 8px}.ge-chg{background:#eaf3ff;border-left-color:#36c}.ge-ok{background:#f2fbf7;border-left-color:#14866d}.ge-banner.c{background:#eaf3ff;border-color:#36c}.ge-bar{margin:4px 0 6px;padding:3px 6px;border:1px solid #a2a9b1;background:#f8f9fa}.ge-log{height:14em;line-height:1.4em;overflow-y:scroll;border:1px solid #a2a9b1;padding:2px 6px;font-size:12px;background:#fff;margin-top:3px}');
 function updateStatus(task) {
   var n = S.rows.length, done = S.rows.filter(function (r) { return r.status === '✔'; }).length, R = S.lastR || [];
   var e = R.filter(function (r) { return r.l === 'e'; }).length, w = R.filter(function (r) { return r.l === 'w'; }).length;
@@ -405,16 +413,21 @@ function monoCtl() {
   t.addEventListener('blur', function () { if (!l.value && t.value) l.value = ML.test(t.value) ? 'ml' : 'en'; });
   return { el: h('div', {}, [t, l]), get: function () { return { text: t.value.trim(), lang: l.value.trim().toLowerCase() }; }, set: function (v, lang) { t.value = (v && v[0]) || ''; l.value = lang || (t.value ? (ML.test(t.value) ? 'ml' : 'en') : ''); } };
 }
+function priceCtl() {
+  var t = h('input', { type: 'text', class: 'ge-in', inputmode: 'decimal', placeholder: 'number only', style: 'width:40%' }), u = sel(PRICE_UNITS.map(function (x) { return [x[0], x[2] + ' ' + x[1]]; }), 'Q80524'); u.style.marginLeft = '4px';
+  t.addEventListener('input', function () { var c = t.value.replace(/[^\d.]/g, ''); if (c !== t.value) t.value = c; });
+  return { el: h('div', {}, [t, u]), get: function () { return { text: t.value.trim(), lang: u.value }; }, set: function (v, l) { t.value = (v && v[0]) || ''; u.value = l || 'Q80524'; } };
+}
 function textCtl(f) {
   var i = h('input', { type: 'text', class: 'ge-in', placeholder: f.hint || (f.m ? 'use | between values' : '') });
   return { el: i, get: function () { return i.value.split('|').map(function (s) { return s.trim(); }).filter(Boolean); }, set: function (a) { i.value = (a || []).join('|'); } };
 }
-function makeCtl(f) { return f.dt === 'item' ? itemCtl(f) : f.dt === 'mono' ? monoCtl() : textCtl(f); }
+function makeCtl(f) { return f.dt === 'item' ? itemCtl(f) : f.dt === 'mono' ? monoCtl() : f.dt === 'price' ? priceCtl() : textCtl(f); }
 
 function collect() {
   F.forEach(function (f) {
     var c = S.ctl[f.pid]; if (!c) return; var v = c.get();
-    if (f.dt === 'mono') { S.vals[f.pid] = v.text ? [v.text] : []; S.vals[f.pid + '_lang'] = v.lang; } else S.vals[f.pid] = v;
+    if (f.dt === 'mono' || f.dt === 'price') { S.vals[f.pid] = v.text ? [v.text] : []; S.vals[f.pid + '_lang'] = v.lang; } else S.vals[f.pid] = v;
   });
   S.vals.meta = S.vals.meta || {}; Object.keys(S.mctl).forEach(function (k) { S.vals.meta[k] = S.mctl[k].value; });
 }
@@ -423,7 +436,7 @@ function setVal(pid, arr) { S.vals[pid] = arr; if (S.ctl[pid]) S.ctl[pid].set(ar
 function fieldRow(f, vals, ctl, popup) {
   vals = vals || S.vals; ctl = ctl || S.ctl;
   var c = makeCtl(popup ? Object.assign({}, f, { find: 0 }) : f); ctl[f.pid] = c;
-  if (f.dt === 'mono') c.set(vals[f.pid], vals[f.pid + '_lang']); else c.set(vals[f.pid]);
+  if (f.dt === 'mono' || f.dt === 'price') c.set(vals[f.pid], vals[f.pid + '_lang']); else c.set(vals[f.pid]);
   var cell = [c.el];
   if (!popup) {
     var info = h('span'), mode = h('select', { style: 'display:none', onchange: function () { S.modes = S.modes || {}; if (mode.value === 'auto') delete S.modes[f.pid]; else S.modes[f.pid] = mode.value; } },
@@ -434,11 +447,28 @@ function fieldRow(f, vals, ctl, popup) {
   if (!popup) kids.push(h('button', { class: 'ge-btn ge-save', type: 'button', title: 'Save only ' + f.pid + ' to Wikidata', onclick: function () { savePid(f.pid); } }, 'Save'));
   return h('div', { class: 'ge-row', 'data-pid': f.pid }, kids);
 }
+function p495Row() {
+  var ids = uniq((S.vals.P495 || []).map(function (x) { return x.id || x.text; }).concat(S.orig ? cids(S.orig, 'P495') : [])).filter(Boolean);
+  return h('div', { class: 'ge-row ge-err', 'data-pid': 'P495' }, [h('div', { class: 'ge-lab' }, [h('a', { href: '/wiki/Property:P495', target: '_blank' }, 'P495'), ' country of origin', h('small', {}, 'not valid on edition items')]),
+    h('div', { class: 'ge-ctl' }, ids.map(function (i) { return /^Q\d+$/.test(i) ? h('span', { class: 'ge-chip' }, h('a', { href: '/wiki/' + i, target: '_blank' }, (L(i).label || i) + ' (' + i + ')')) : h('span', { class: 'ge-chip ge-un' }, i); })),
+    h('button', { class: 'ge-btn ge-save', type: 'button', onclick: removeP495 }, 'Remove P495')]);
+}
+async function removeP495() {
+  try {
+    collect(); S.vals.P495 = [];
+    if (S.qid && S.orig && (S.orig.claims || {}).P495) {
+      await apost({ action: 'wbeditentity', id: S.qid, data: JSON.stringify({ claims: S.orig.claims.P495.map(function (c) { return { id: c.id, remove: '' }; }) }), summary: 'Removing P495 (country of origin is not used on edition items)' + SUF });
+      logEdit(S.qid, 'removed P495 (not valid on editions)'); S.orig = (await getEnts([S.qid], 'labels|descriptions|aliases|claims'))[S.qid];
+    }
+    renderForm(); toast('P495 removed'); await runValidation();
+  } catch (e) { fail(e); }
+}
 function renderForm() {
   var fm = S.el.form; fm.innerHTML = ''; S.ctl = {}; S.mctl = {}; S.rowEl = {};
   var main = [], extra = [];
   F.forEach(function (f) { if (applies(f, S.type)) (f.x ? extra : main).push(f); });
   fm.appendChild(h('div', { class: 'ge-grid' }, main.map(function (f) { return fieldRow(f); })));
+  if (S.type === 'edition' && ((S.vals.P495 || []).length || (S.orig && cids(S.orig, 'P495').length))) fm.appendChild(p495Row());
   if (S.ext) {
     fm.appendChild(h('p', {}, h('b', {}, 'Optional fields')));
     fm.appendChild(h('div', { class: 'ge-grid' }, extra.map(function (f) { return fieldRow(f); })));
@@ -464,7 +494,8 @@ function autoFill() {
 /* ----- navigation ----- */
 function syncToolbar() {
   if (!S.el.bBasic) return; S.el.bBasic.style.fontWeight = S.ext ? 'normal' : 'bold'; S.el.bExt.style.fontWeight = S.ext ? 'bold' : 'normal';
-  S.el.bBasic.disabled = !S.ext; S.el.bExt.disabled = !!S.ext; S.el.typeSel.value = S.type;
+  S.el.bBasic.disabled = !S.ext; S.el.bExt.disabled = !!S.ext; S.el.typeSel.value = S.type; S.el.typeSel.disabled = !!S.typeLocked; S.el.typeNote.textContent = S.typeLocked ? ' 🔒 locked – taken from Wikidata P31' : '';
+  if (S.el.genSel && S.genFor !== S.type) { S.el.genSel.value = S.type === 'edition' ? 'work' : 'edition'; S.genFor = S.type; }
 }
 function setView(ext) { collect(); S.ext = ext; renderForm(); }
 function renderNav() {
@@ -481,13 +512,13 @@ function go(d) { var i = S.i + d; if (i >= 0 && i < S.rows.length) loadRow(i); }
 async function loadRow(i) {
   try {
     if (S.i >= 0 && S.rows[S.i] && S.ctl.P1476) collect();
-    S.i = i; var r = S.rows[i]; setStatus('Loading…'); S.qid = r.qid; S.orig = null; S.vals = {}; S.el.res.innerHTML = ''; S.el.info.innerHTML = ''; S.lastR = null; S.modes = {};
+    S.i = i; var r = S.rows[i]; setStatus('Loading…'); S.qid = r.qid; S.orig = null; S.vals = {}; S.el.res.innerHTML = ''; S.el.info.innerHTML = ''; S.lastR = null; S.modes = {}; S.typeLocked = false;
     if (r.qid) {
       var e = (await getEnts([r.qid], 'labels|descriptions|aliases|claims'))[r.qid];
       if (!e || e.missing !== undefined) { S.qid = ''; S.el.info.appendChild(h('div', { class: 'ge-r e' }, r.qid + ' does not exist.')); }
       else {
         S.orig = e; S.vals = entityToVals(e); var dt = detectType(e);
-        if (dt) S.type = dt; else { S.type = r.type === 'work' ? 'work' : 'edition'; S.el.info.appendChild(h('div', { class: 'ge-r w' }, 'Could not detect type from P31 = ' + (p31(e).join(', ') || 'none') + '. Choose the type manually.')); }
+        if (dt) { S.type = dt; S.typeLocked = true; } else { S.type = r.type === 'work' ? 'work' : 'edition'; S.el.info.appendChild(h('div', { class: 'ge-r w' }, 'Could not detect type from P31 = ' + (p31(e).join(', ') || 'none') + '. Choose the type manually.')); }
         await ensureLabels(p31(e)); await ensureLabels([].concat.apply([], F.filter(function (f) { return f.dt === 'item'; }).map(function (f) { return cids(e, f.pid); })));
         S.el.info.appendChild(h('div', { class: 'ge-r i' }, 'Loaded ' + r.qid + ' · P31: ' + p31(e).map(function (q) { return (L(q).label || q) + ' (' + q + ')'; }).join(', ')));
       }
@@ -497,6 +528,7 @@ async function loadRow(i) {
     if (r.qid && n) S.el.info.appendChild(h('div', { class: 'ge-r w' }, 'Sheet values (' + n + ' fields) applied over the existing item – review the diff before saving.'));
     if (r.type === 'both') S.el.info.appendChild(h('div', { class: 'ge-r i' }, 'Row marked “both”: use “Save + create linked work” to create both items.'));
     S.vals.meta = r.meta || {};
+    if (!S.orig && !(S.vals.P31 || []).length) S.vals.P31 = [{ id: Q[S.type] }];
     var ids = []; Object.keys(S.vals).forEach(function (k) { if (Array.isArray(S.vals[k])) S.vals[k].forEach(function (x) { if (x && x.id) ids.push(x.id); }); });
     await ensureLabels(ids.concat(S.qid ? [S.qid] : []));
     renderNav(); renderForm(); setStatus('');
@@ -509,6 +541,8 @@ async function validate(type, v, orig, qid) {
   var R = [], add = function (l, m) { R.push({ l: l, m: m }); };
   var g = function (p) { return (v[p] || []).filter(function (x) { return x && (x.id || x.text || (typeof x === 'string' && x.trim())); }); };
   var tt = (v.P1476 || [''])[0] || '', tl = v.P1476_lang;
+  var h31 = function (q) { return (v.P31 || []).some(function (x) { return x && x.id === q; }); };
+  if (!(type === 'work' ? h31(Q.work) : (h31(Q.edition) || h31(Q.translation)))) add('e', 'Instance of (P31) must include ' + (type === 'work' ? 'written work (Q47461344)' : 'version, edition or translation (Q3331189)') + '.');
   if (!tt.trim()) add('e', 'Title (P1476) is empty.');
   if (!tl) add('e', 'Title language code missing.'); else if (!/^[a-z]{2,3}(-[a-z0-9]+)*$/i.test(tl)) add('e', 'Invalid title language code “' + tl + '”.');
   else if (ML.test(tt) && tl !== 'ml') add('w', 'Title is Malayalam script but language code is “' + tl + '”.');
@@ -518,7 +552,8 @@ async function validate(type, v, orig, qid) {
   if (!g('P407').length) add('w', 'Language (P407) missing.');
   var lm = { ml: Q.ml, en: Q.en };
   if (lm[tl] && g('P407').length && !g('P407').some(function (x) { return x.id === lm[tl]; })) add('w', 'P407 does not include the title language (' + tl + ').');
-  if (!g('P495').length) add('w', 'Country of origin (P495) missing.');
+  if (type === 'work') { if (!g('P495').length) add('w', 'Country of origin (P495) missing.'); }
+  else if (g('P495').length || (orig && orig.claims && orig.claims.P495 && orig.claims.P495.length)) add('e', 'Country of origin (P495) must not be used on edition items – use “Remove P495”.');
   ['P571', 'P577'].forEach(function (p) {
     if (!applies(FB[p], type)) return;
     g(p).forEach(function (s) {
@@ -529,11 +564,13 @@ async function validate(type, v, orig, qid) {
   });
   var intOk = function (s) { return /^\d+$/.test(s) && +s > 0; };
   if (type === 'edition') {
-    if (!g('P629').length) add('w', 'No work linked (P629) – use “Generate linked work/edition…” or “Find existing work/edition”.');
+    if (!g('P629').length) add('w', 'No work linked (P629) – use “Generate New Entry” (Work) or “Find existing work/edition”.');
     if (!g('P577').length) add('w', 'Publication date (P577) missing.');
     if (!g('P123').length) add('w', 'Publisher (P123) missing.');
     if (!g('P291').length) add('i', 'Place of publication (P291) missing.');
     g('P393').forEach(function (s) { if (!/^\d+$/.test(s)) add('w', 'Edition number “' + s + '” – use plain numbers (1, 2, 3).'); });
+    g('P2284').forEach(function (x) { if (!/^\d+(\.\d+)?$/.test(x)) add('e', 'Price (P2284) must be a number only.'); else if (+x === 0) add('w', 'Price (P2284) is 0.'); });
+    if (g('P2284').length && ['Q80524', 'Q4917'].indexOf(v.P2284_lang || 'Q80524') < 0) add('w', 'Price (P2284) currency should be INR (Q80524) or USD (Q4917).');
     ['P1104', 'P2635'].forEach(function (p) { g(p).forEach(function (s) { if (!intOk(s)) add('e', FB[p].name + ': “' + s + '” must be a positive whole number.'); }); });
     g('P957').forEach(function (s) { if (!isbn10ok(s)) add('e', 'ISBN-10 “' + s + '” fails checksum/format.'); else if (!/-/.test(s)) add('w', 'ISBN-10 should be written with hyphens.'); });
     g('P212').forEach(function (s) { if (!isbn13ok(s)) add('e', 'ISBN-13 “' + s + '” fails checksum/format.'); else if (!/-/.test(s)) add('w', 'ISBN-13 should be written with hyphens.'); });
@@ -572,20 +609,33 @@ async function validate(type, v, orig, qid) {
   if (!R.length) add('o', 'No problems found.');
   return R;
 }
-function renderR(box, R) {
+function renderR(box, R, pend) {
   box.innerHTML = ''; var c = { e: 0, w: 0, i: 0 }; R.forEach(function (r) { if (c[r.l] !== undefined) c[r.l]++; });
-  box.appendChild(h('div', { class: 'ge-banner ' + (c.e ? 'e' : c.w ? 'w' : 'o') }, (c.e ? 'RED – ' : c.w ? 'AMBER – ' : 'GREEN – ') + 'errors ' + c.e + ' · warnings ' + c.w + ' · notes ' + c.i));
+  box.appendChild(h('div', { class: 'ge-banner ' + (c.e ? 'e' : c.w ? 'w' : pend ? 'c' : 'o') }, (c.e ? 'RED – ' : c.w ? 'AMBER – ' : pend ? 'BLUE – no problems; ' + pend + ' change(s) to save · ' : 'GREEN – OK · ') + 'errors ' + c.e + ' · warnings ' + c.w + ' · notes ' + c.i));
   R.slice().sort(function (a, b) { return 'ewio'.indexOf(a.l) - 'ewio'.indexOf(b.l); }).forEach(function (r) { box.appendChild(h('div', { class: 'ge-r ' + r.l }, r.m)); });
 }
 var KEYP = [[/^Title|^Invalid title/, 'P1476'], [/^Subtitle/, 'P1680'], [/ISBN-10/, 'P957'], [/ISBN-13/, 'P212'], [/OCLC/, 'P243'], [/Open Library/, 'P648'], [/^Edition number/, 'P393'], [/^Publisher/, 'P123'],
   [/^Publication date|^Edition is dated/, 'P577'], [/^Country of origin/, 'P495'], [/^No author|^Authors differ/, 'P50'], [/^Commons file/, 'P996']];
 function pidOf(m) { var x = /\b(P\d+)\b/.exec(m); if (x && FB[x[1]]) return x[1]; for (var i = 0; i < KEYP.length; i++) if (KEYP[i][0].test(m)) return KEYP[i][1]; return null; }
-function highlight(R) {
-  var map = {}; R.forEach(function (r) { var p = pidOf(r.m); if (p && (r.l === 'e' || r.l === 'w') && map[p] !== 'e') map[p] = r.l; });
-  [].forEach.call(S.el.form.querySelectorAll('[data-pid]'), function (el) { var l = map[el.getAttribute('data-pid')]; el.classList.toggle('ge-err', l === 'e'); el.classList.toggle('ge-warn', l === 'w'); });
+function highlight(R) { S.lastR = R; paintRows(); }
+function paintRows() {
+  if (!S.el.form) return; var map = {};
+  (S.lastR || []).forEach(function (r) { var p = pidOf(r.m); if (p && (r.l === 'e' || r.l === 'w') && map[p] !== 'e') map[p] = r.l; });
+  [].forEach.call(S.el.form.querySelectorAll('[data-pid]'), function (el) {
+    var pid = el.getAttribute('data-pid'), l = map[pid], st = '', f = FB[pid];
+    if (l === 'e') st = 'ge-err'; else if (l === 'w') st = 'ge-warn';
+    else { var d = S.orig && f ? diffOf(pid) : null; if (d && d.add.length) st = 'ge-chg'; else if (S.lastR && f && (S.vals[pid] || []).length) st = 'ge-ok'; }
+    ['ge-err', 'ge-warn', 'ge-chg', 'ge-ok'].forEach(function (c) { el.classList.toggle(c, c === st); });
+  });
+}
+function updateChanges() {
+  if (!S.el.btnAll || !S.el.optMode) return; var n = 0;
+  try { n = buildData(S.type, S.vals, S.orig, opts()).n; } catch (e) { n = 0; } S.pending = n;
+  S.el.btnAll.textContent = 'Update all' + (n ? ' (' + n + ' change' + (n > 1 ? 's' : '') + ')' : '');
+  S.el.chgText.textContent = S.orig ? (n ? n + ' pending change(s) compared with Wikidata' : 'no changes compared with Wikidata') : 'new item – ' + n + ' statement/label(s) will be created';
 }
 async function runValidation() {
-  try { collect(); updateStatus('checking…'); var R = await validate(S.type, S.vals, S.orig, S.qid); S.lastR = R; renderR(S.el.res, R); highlight(R); updateStatus(); return R; }
+  try { collect(); updateChanges(); updateStatus('checking…'); var R = await validate(S.type, S.vals, S.orig, S.qid); S.lastR = R; renderR(S.el.res, R, S.pending); highlight(R); updateStatus(); return R; }
   catch (e) { fail(e); return [{ l: 'e', m: 'check failed' }]; }
 }
 
@@ -621,7 +671,7 @@ function diffOf(pid) {
   var want = (S.vals[pid] || []).filter(function (x) { return f.dt === 'item' ? x && x.id : String(x).trim(); }).map(function (x) { return normForm(f, x, lang); });
   return { ek: ek, want: want, add: want.filter(function (k) { return ek.indexOf(k) < 0; }), gone: ek.filter(function (k) { return want.indexOf(k) < 0; }) };
 }
-function dispVal(f, k) { return f.dt === 'item' ? (L(k).label || k) + ' (' + k + ')' : f.dt === 'mono' ? k.split('|').slice(1).join('|') : k; }
+function dispVal(f, k) { return f.dt === 'item' ? (L(k).label || k) + ' (' + k + ')' : f.dt === 'mono' ? k.split('|').slice(1).join('|') : f.dt === 'price' ? k.split('|')[0] + ' ' + (k.split('|')[1] === 'Q4917' ? 'USD' : 'INR') : k; }
 function refreshRows() {
   Object.keys(S.rowEl || {}).forEach(function (pid) {
     var r = S.rowEl[pid], f = FB[pid], d = diffOf(pid); r.info.textContent = ''; r.mode.style.display = 'none';
@@ -631,7 +681,7 @@ function refreshRows() {
     else if (d.gone.length && d.want.length) r.info.textContent = 'Wikidata also has: ' + d.gone.map(function (k) { return dispVal(f, k); }).join(', ');
     else if (d.ek.length) r.info.textContent = '✓ same as Wikidata';
   });
-  renderLinked();
+  renderLinked(); updateChanges(); paintRows();
 }
 async function savePid(pid) {
   try {
@@ -649,7 +699,7 @@ async function savePid(pid) {
 }
 var vt;
 function onFormChange() { collect(); renderLinks(); refreshRows(); clearTimeout(vt); vt = setTimeout(runValidation, 1200); }
-function commonsUrl(n) { return 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(n.replace(/^File:/i, '').trim().replace(/ /g, '_')); }
+function commonsUrl(n) { return 'https://mlwikisource.github.io/bookreader/?file=' + encodeURIComponent(n.replace(/^File:/i, '').trim().replace(/ /g, '_')); }
 function renderLinks() {
   var b = S.el.links; if (!b) return; b.innerHTML = ''; var v = S.vals || {};
   var bub = function (cls, href, t, title) { return href ? h('a', { class: 'ge-bub ' + cls, href: href, target: '_blank', title: title || '' }, t) : h('span', { class: 'ge-bub ge-off', title: title || '' }, t); };
@@ -657,7 +707,7 @@ function renderLinks() {
   if (S.type === 'edition') {
     var idx = (v.P1957 || [])[0], fl = (v.P996 || [])[0];
     b.appendChild(bub('ws', idx && /^https?:\/\//.test(idx) ? idx : '', 'WS Index', idx || 'no Wikisource index (P1957) value'));
-    b.appendChild(bub('cm', fl ? commonsUrl(fl) : '', 'Commons File', fl ? 'File:' + fl.replace(/^File:/i, '') : 'no Commons file (P996) value'));
+    b.appendChild(bub('cm', fl ? commonsUrl(fl) : '', 'Commons File', fl ? 'Open in book reader: ' + fl.replace(/^File:/i, '') : 'no Commons file (P996) value'));
   }
 }
 function renderLinked() {
@@ -673,8 +723,8 @@ function renderLinked() {
 }
 function logEdit(qid, what) {
   var t = new Date().toLocaleTimeString(); S.log = S.log || []; S.log.push([t, qid, what]);
-  S.el.log.appendChild(h('div', {}, [S.log.length + '. ' + t + ' ', h('a', { href: '/wiki/' + qid, target: '_blank' }, qid), ' – ' + what]));
-  S.el.log.scrollTop = S.el.log.scrollHeight; S.el.logHead.textContent = 'Edits in this session (' + S.log.length + ')';
+  S.el.log.insertBefore(h('div', {}, [S.log.length + '. ' + t + ' ', h('a', { href: '/wiki/' + qid, target: '_blank' }, qid), ' – ' + what]), S.el.log.firstChild);
+  S.el.log.scrollTop = 0; S.el.logHead.textContent = 'Edits in this session (' + S.log.length + ')';
 }
 
 async function afterSave(qid) {
@@ -698,22 +748,26 @@ async function doSave() {
     toast('Saved ' + qid + (m.length ? ' · ' + m.join(', ') : '')); setStatus('');
   } catch (e) { fail(e); }
 }
+function deriveSame(type, v) {
+  var o = carry(v, ['P1476', 'P1476_lang', 'P1680', 'P1680_lang', 'P50', 'P98', 'P655', 'P407'].concat(type === 'work' ? ['P495', 'P7937', 'P135'] : ['P629'])); o.meta = {}; return o;
+}
 async function openCounterpart() {
   try {
-    collect(); if (!(await preflight())) return;
-    var isEd = S.type === 'edition', other = isEd ? 'work' : 'edition';
-    if (isEd && (S.vals.P629 || []).length) return toast('This edition already has a work (P629).', true);
-    var dv = isEd ? deriveWork(S.vals) : deriveEdition(S.vals, null); delete dv.P629;
+    collect();
+    var cur = S.type, nt = S.el.genSel.value, cross = nt !== cur, isEd = cur === 'edition';
+    if (cross) { if (!(await preflight())) return; if (isEd && (S.vals.P629 || []).length) return toast('This edition already has a work (P629).', true); }
+    var dv = !cross ? deriveSame(cur, S.vals) : isEd ? deriveWork(S.vals) : deriveEdition(S.vals, null); if (cross) delete dv.P629; dv.P31 = [{ id: Q[nt] }];
     var ids = []; Object.keys(dv).forEach(function (k) { if (Array.isArray(dv[k])) dv[k].forEach(function (x) { if (x && x.id) ids.push(x.id); }); }); await ensureLabels(ids);
     var ctl = {}, ov = h('div', { class: 'ge-ov2' }), box = h('div', { class: 'ge-box ge-small' }), res = h('div'), prog = h('div', { class: 'ge-status' }, 'Not started'), grid = h('div', { class: 'ge-grid' }), btn;
     ov.appendChild(box);
-    F.forEach(function (f) { if (applies(f, other) && !f.x && f.pid !== 'P629' && f.pid !== 'P747') grid.appendChild(fieldRow(f, dv, ctl, true)); });
-    var readDraft = function () { Object.keys(ctl).forEach(function (pd) { var f = FB[pd], v = ctl[pd].get(); if (f.dt === 'mono') { dv[pd] = v.text ? [v.text] : []; dv[pd + '_lang'] = v.lang; } else dv[pd] = v; }); };
-    var steps = isEd ? ['Create the new work from the values below', 'Save this edition with P629 → new work', 'Add P747 on the new work → this edition'] :
+    F.forEach(function (f) { if (applies(f, nt) && !f.x && f.pid !== 'P31' && f.pid !== 'P747' && !(f.pid === 'P629' && cross)) grid.appendChild(fieldRow(f, dv, ctl, true)); });
+    var readDraft = function () { Object.keys(ctl).forEach(function (pd) { var f = FB[pd], v = ctl[pd].get(); if (f.dt === 'mono' || f.dt === 'price') { dv[pd] = v.text ? [v.text] : []; dv[pd + '_lang'] = v.lang; } else dv[pd] = v; }); };
+    var steps = !cross ? ['Create the new ' + nt + ' from the values below (based on the current ' + cur + ')', nt === 'edition' ? 'If a work (P629) is set: add P747 on that work → new edition' : 'No cross-link needed (standalone work)'] :
+      isEd ? ['Create the new work from the values below', 'Save this edition with P629 → new work', 'Add P747 on the new work → this edition'] :
       ['Save this work' + (S.qid ? ' (' + S.qid + ')' : ' (new item)'), 'Create the new edition from the values below with P629 → this work', 'Add P747 on this work → new edition'];
     async function check() {
-      readDraft(); var R = await validate(other, dv, null, ''); R = R.filter(function (r) { return !/^No (work|edition) linked/.test(r.m); });
-      R.push({ l: 'i', m: 'Cross-link: ' + (isEd ? 'edition P629 ↔ work P747' : 'work P747 ↔ edition P629') + ' will be set on both items. The form is updated with the new QID after creation.' });
+      readDraft(); var R = await validate(nt, dv, null, ''); R = R.filter(function (r) { return !(cross && /^No (work|edition) linked/.test(r.m)); });
+      R.push({ l: 'i', m: cross ? 'Cross-link: ' + (isEd ? 'edition P629 ↔ work P747' : 'work P747 ↔ edition P629') + ' will be set on both items. The form is updated with the new QID after creation.' : 'New ' + nt + ' based on the current ' + cur + '; the current item is not changed.' });
       renderR(res, R); highlight2(R); return R;
     }
     function highlight2(R) { var map = {}; R.forEach(function (r) { var q = pidOf(r.m); if (q && (r.l === 'e' || r.l === 'w') && map[q] !== 'e') map[q] = r.l; });
@@ -721,7 +775,14 @@ async function openCounterpart() {
     async function run() {
       try {
         var R = await check(); if (R.some(function (r) { return r.l === 'e'; })) return toast('Fix the errors in the pop-up first.', true);
-        btn.disabled = true; var step = function (i) { prog.textContent = 'Step ' + i + ' of 3: ' + steps[i - 1]; };
+        btn.disabled = true; var step = function (i) { prog.textContent = 'Step ' + i + ' of ' + steps.length + ': ' + steps[i - 1]; };
+        if (!cross) {
+          step(1); var nq = await saveItem(nt, dv, null, '', opts());
+          if (nt === 'edition' && dv.P629 && dv.P629[0] && dv.P629[0].id) { step(2); await ensureLink(dv.P629[0].id, 'P747', nq); }
+          ov.remove(); toast('Created ' + nq);
+          if (confirm('Created ' + nq + '. Open it in the editor now?')) { S.rows.push({ qid: nq, type: '', vals: {}, meta: {}, status: '' }); loadRow(S.rows.length - 1); } else await runValidation();
+          return;
+        }
         if (isEd) {
           step(1); var wq = await saveItem('work', dv, null, '', opts());
           S.vals.P629 = [{ id: wq }]; step(2); var eq = await saveItem('edition', S.vals, S.orig, S.qid, opts());
@@ -736,8 +797,8 @@ async function openCounterpart() {
         ov.remove(); toast('Created and cross-linked.'); await runValidation();
       } catch (e) { fail(e); btn.disabled = false; }
     }
-    btn = h('button', { class: 'ge-btn', onclick: run }, 'Create and cross-link');
-    box.appendChild(h('div', {}, h('b', {}, 'Generate linked ' + other + ' – review all values')));
+    btn = h('button', { class: 'ge-btn', onclick: run }, 'Create new ' + nt);
+    box.appendChild(h('div', {}, h('b', {}, 'Generate new ' + nt + ' entry – based on the current ' + cur + ' · review all values')));
     box.appendChild(h('ol', {}, steps.map(function (t) { return h('li', {}, t); })));
     box.appendChild(grid); box.appendChild(res); box.appendChild(prog);
     box.appendChild(h('p', {}, [btn, h('button', { class: 'ge-btn', onclick: check }, 'Re-check'), h('button', { class: 'ge-btn', onclick: function () { ov.remove(); } }, 'Cancel')]));
@@ -823,22 +884,28 @@ function buildUI() {
   S.el.form.addEventListener('change', onFormChange);
   S.el.optMode = sel([['auto', 'Auto (overwrite single-valued, add to multi-valued)'], ['add', 'Always add as additional'], ['over', 'Always overwrite']], 'auto');
   S.el.optOver = h('input', { type: 'checkbox' });
+  S.el.btnAll = h('button', { class: 'ge-btn', onclick: doSave }, 'Update all'); S.el.chgText = h('span', { class: 'ge-info' }); S.el.bar = h('div', { class: 'ge-bar' }, [S.el.btnAll, ' ', S.el.chgText]);
+  S.el.genSel = sel([['work', 'Work'], ['edition', 'Edition']], 'work');
   S.el.bBasic = h('button', { class: 'ge-btn', onclick: function () { setView(false); } }, 'Basic view'); S.el.bExt = h('button', { class: 'ge-btn', onclick: function () { setView(true); } }, 'Extended view');
-  S.el.typeSel = sel([['edition', 'Edition item'], ['work', 'Work item']], 'edition'); S.el.typeSel.addEventListener('change', function () { collect(); S.type = S.el.typeSel.value; renderForm(); });
+  S.el.typeSel = sel([['edition', 'Edition item'], ['work', 'Work item']], 'edition'); S.el.typeNote = h('span', { class: 'ge-info' });
+  S.el.typeSel.addEventListener('change', function () {
+    collect(); var old = S.type; S.type = S.el.typeSel.value;
+    var p31s = (S.vals.P31 || []).filter(function (x) { return x.id !== Q[old]; }); if (!p31s.some(function (x) { return x.id === Q[S.type]; })) p31s.push({ id: Q[S.type] }); S.vals.P31 = p31s;
+    ensureLabels([Q.edition, Q.work]).then(renderForm);
+  });
   var load_ = h('details', { open: true }, [h('summary', {}, 'Input (QID list or CSV/TSV master sheet)'), ta, h('div', {}, [file,
     h('button', { class: 'ge-btn', onclick: load }, 'Load rows'), h('button', { class: 'ge-btn', onclick: function () { newItem('work'); } }, 'Blank work'), h('button', { class: 'ge-btn', onclick: function () { newItem('edition'); } }, 'Blank edition'),
     h('button', { class: 'ge-btn', onclick: function () { dl('grandham-master-sample.csv', sampleCsv()); } }, 'Sample master CSV'), h('button', { class: 'ge-btn', onclick: batchQC }, 'Batch QC of all QIDs')])]);
   var acts = h('div', {}, [h('b', {}, 'Actions (one item at a time)'), h('div', {}, [
-    h('button', { class: 'ge-btn', onclick: runValidation }, 'Validate'), h('button', { class: 'ge-btn', onclick: doSave }, 'Update all'),
-    h('button', { class: 'ge-btn', onclick: openCounterpart }, 'Generate linked work/edition…'), h('button', { class: 'ge-btn', onclick: findCounterpart }, 'Find existing work/edition'),
+    h('button', { class: 'ge-btn', onclick: runValidation }, 'Validate'), h('span', {}, [' New entry: ', S.el.genSel, ' ', h('button', { class: 'ge-btn', onclick: openCounterpart }, 'Generate New Entry')]), h('button', { class: 'ge-btn', onclick: findCounterpart }, 'Find existing work/edition'),
     h('button', { class: 'ge-btn', onclick: function () { collect(); var a = (S.vals.P957 || [])[0]; if (a && isbn10ok(a)) { setVal('P212', [toIsbn13(a)]); } else toast('Enter a valid ISBN-10 first', true); } }, 'ISBN-10 → 13'),
     h('button', { class: 'ge-btn', onclick: function () { dl('grandham-session-log.csv', ['time,qid,action'].concat((S.log || []).map(function (r) { return r.map(csvCell).join(','); })).join('\r\n')); } }, 'Download session log')]),
     h('div', {}, ['If a value differs from Wikidata: ', S.el.optMode]), h('label', {}, [S.el.optOver, ' overwrite existing labels/descriptions']),
     h('div', { class: 'ge-info' }, 'Each field has its own Save button (saves that property only); “Update all” saves every field in one edit.')]);
   var box = h('div', { class: 'ge-box' }, [
     h('div', { class: 'ge-top' }, [h('div', { class: 'ge-topl' }, [h('b', { style: 'font-size:120%' }, 'Grandham Editor'), load_]), h('div', { class: 'ge-topr' }, acts)]),
-    S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel, S.el.links]), S.el.info,
-    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · plain = note · green = all clear'), S.el.res, h('hr'), S.el.linkedHead, S.el.linked])]), h('div', { style: 'margin-top:10px' }, [S.el.logHead, ' (latest at bottom)', S.el.log])]);
+    S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel, S.el.typeNote, S.el.links]), S.el.info,
+    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, [S.el.bar, S.el.form]), h('div', { class: 'ge-right' }, [h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · Blue = differs from Wikidata (needs update) · Green = OK'), S.el.res, h('hr'), S.el.linkedHead, S.el.linked])]), h('div', { style: 'margin-top:10px' }, [S.el.logHead, ' (latest at top)', S.el.log])]);
   S.el.ov = h('div', { class: 'ge-page' }, box); document.body.appendChild(S.el.ov); document.body.appendChild(dl_); document.body.appendChild(rg);
 }
 var PAGE = 'Special:BlankPage/GrandhamEditor';
@@ -853,6 +920,6 @@ function mountPage() {
 var pn = mw.config.get('wgPageName') || '';
 if (pn.toLowerCase() === PAGE.toLowerCase()) $(mountPage);
 else {
-  var link = mw.util.addPortletLink('p-tb', mw.util.getUrl(PAGE, /^Q\d+$/.test(pn) ? { qid: pn } : {}), 'Grandham Editor', 't-grandham', 'Open Grandham Book Editor (#mlwsBookEditor)');
+  var link = mw.util.addPortletLink('p-tb', mw.util.getUrl(PAGE, /^Q\d+$/.test(pn) ? { qid: pn } : {}), 'Grandham Editor', 't-grandham', 'Open Grandham Book Editor (#GrandhamEditor)');
 }
 });
