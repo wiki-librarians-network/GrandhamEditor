@@ -81,7 +81,7 @@ function h(tag, a, kids) {
     if (k === 'class') e.className = v; else if (k === 'style') e.style.cssText = v;
     else if (k.slice(0, 2) === 'on') e.addEventListener(k.slice(2), v); else if (v !== false && v != null) e.setAttribute(k, v);
   });
-  [].concat(kids === undefined ? [] : kids).forEach(function (c) { if (c == null || c === false) return; e.appendChild(typeof c === 'object' ? c : document.createTextNode(c)); });
+  (function fl(a) { return [].concat.apply([], [].concat(a).map(function (x) { return Array.isArray(x) ? fl(x) : [x]; })); })(kids === undefined ? [] : kids).forEach(function (c) { if (c == null || c === false) return; e.appendChild(typeof c === 'object' ? c : document.createTextNode(c)); });
   return e;
 }
 function uniq(a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); }
@@ -355,7 +355,7 @@ mw.util.addCSS('.ge-info{font-size:11px;color:#54595d}.ge-save{flex:none;align-s
 '.ge-r.e{background:#fee7e6}.ge-r.w{background:#fef6e7}.ge-err{background:#fee7e6}.ge-warn{background:#fef6e7}.ge-legend{font-size:11px;color:#54595d}');
 mw.util.addCSS('.ge-links{display:inline-block;margin:0 0 0 8px}.ge-bub{display:inline-block;padding:1px 10px;margin-right:6px;border-radius:12px;font-size:12px;text-decoration:none;border:1px solid}' +
 '.ge-bub.wd{background:#cfe2ff;border-color:#6ea8fe;color:#084298}.ge-bub.ws{background:#fff3bf;border-color:#e0b100;color:#664d03}.ge-bub.cm{background:#d1e7dd;border-color:#75b798;color:#0a3622}.ge-bub.ge-off{background:#f1f1f1;border-color:#ccc;color:#888}' +
-'.ge-log{height:14em;line-height:1.4em;overflow-y:scroll;border:1px solid #a2a9b1;padding:2px 6px;font-size:12px;background:#fff;margin-top:3px}');
+'.ge-top{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:flex-start}.ge-topl{flex:1 1 400px;min-width:0}.ge-topr{flex:0 1 520px;border:1px solid #a2a9b1;padding:4px 8px}.ge-log{height:14em;line-height:1.4em;overflow-y:scroll;border:1px solid #a2a9b1;padding:2px 6px;font-size:12px;background:#fff;margin-top:3px}');
 function updateStatus(task) {
   var n = S.rows.length, done = S.rows.filter(function (r) { return r.status === '✔'; }).length, R = S.lastR || [];
   var e = R.filter(function (r) { return r.l === 'e'; }).length, w = R.filter(function (r) { return r.l === 'w'; }).length;
@@ -529,7 +529,7 @@ async function validate(type, v, orig, qid) {
   });
   var intOk = function (s) { return /^\d+$/.test(s) && +s > 0; };
   if (type === 'edition') {
-    if (!g('P629').length) add('w', 'No work linked (P629) – use “Save + create linked work” or 🔎 find existing.');
+    if (!g('P629').length) add('w', 'No work linked (P629) – use “Generate linked work/edition…” or “Find existing work/edition”.');
     if (!g('P577').length) add('w', 'Publication date (P577) missing.');
     if (!g('P123').length) add('w', 'Publisher (P123) missing.');
     if (!g('P291').length) add('i', 'Place of publication (P291) missing.');
@@ -836,9 +836,9 @@ function buildUI() {
     h('div', {}, ['If a value differs from Wikidata: ', S.el.optMode]), h('label', {}, [S.el.optOver, ' overwrite existing labels/descriptions']),
     h('div', { class: 'ge-info' }, 'Each field has its own Save button (saves that property only); “Update all” saves every field in one edit.')]);
   var box = h('div', { class: 'ge-box' }, [
-    h('div', {}, h('b', { style: 'font-size:120%' }, 'Grandham Editor')),
-    load_, S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel, S.el.links]), S.el.info,
-    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [acts, h('hr'), h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · plain = note · green = all clear'), S.el.res, h('hr'), S.el.linkedHead, S.el.linked])]), h('div', { style: 'margin-top:10px' }, [S.el.logHead, ' (latest at bottom)', S.el.log])]);
+    h('div', { class: 'ge-top' }, [h('div', { class: 'ge-topl' }, [h('b', { style: 'font-size:120%' }, 'Grandham Editor'), load_]), h('div', { class: 'ge-topr' }, acts)]),
+    S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel, S.el.links]), S.el.info,
+    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · plain = note · green = all clear'), S.el.res, h('hr'), S.el.linkedHead, S.el.linked])]), h('div', { style: 'margin-top:10px' }, [S.el.logHead, ' (latest at bottom)', S.el.log])]);
   S.el.ov = h('div', { class: 'ge-page' }, box); document.body.appendChild(S.el.ov); document.body.appendChild(dl_); document.body.appendChild(rg);
 }
 var PAGE = 'Special:BlankPage/GrandhamEditor';
