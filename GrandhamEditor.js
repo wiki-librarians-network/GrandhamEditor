@@ -32,7 +32,7 @@ var PRE_MOVE = [['Q3523410', 'Manipravalam'], ['Q15580856', 'feminist movement']
 
 // t: W=work E=edition ; x: optional (hidden under "Optional fields") ; m: multiple values allowed
 var F = [
- { pid: 'P31', name: 'instance of', dt: 'item', m: 1, col: 'instance_of', t: 'WE', pre: [['Q3331189', 'edition'], ['Q47461344', 'written work']], hint: 'type is taken from Wikidata; add others if needed' },
+ { pid: 'P31', name: 'instance of', dt: 'item', m: 1, col: 'instance_of', t: 'WE', hint: 'type is taken from Wikidata; add others if needed' },
  { pid: 'P1476', name: 'title', dt: 'mono', col: 'title', t: 'WE', hint: 'Text + language code' },
  { pid: 'P1680', name: 'subtitle', dt: 'mono', col: 'subtitle', t: 'WE', hint: 'Text + language code' },
  { pid: 'P629', name: 'edition or translation of (work)', dt: 'item', col: 'work_qid', t: 'E', hint: 'Work item (P31 = written work)', find: 1 },
@@ -239,7 +239,7 @@ function buildData(type, v, orig, opts) {
   var has = function (q) { return (v.P31 || []).some(function (x) { return x && x.id === q; }); };
   if (!opts.only && !(type === 'work' ? has(Q.work) : (has(Q.edition) || has(Q.translation)))) v = Object.assign({}, v, { P31: (v.P31 || []).concat([{ id: Q[type] }]) });
   F.forEach(function (f) {
-    if (!applies(f, type) || (opts.only && f.pid !== opts.only)) return;
+    if (!applies(f, type) || (opts.stub && f.pid !== 'P31') || (opts.only && f.pid !== opts.only)) return;
     var lang = v[f.pid + '_lang'], want = (v[f.pid] || []).filter(function (x) { return f.dt === 'item' ? x.id : String(x).trim(); });
     var ex = ((orig && orig.claims) || {})[f.pid] || [];
     var wk = {}; want.forEach(function (x) { wk[normForm(f, x, lang)] = x; });
@@ -260,7 +260,13 @@ async function saveItem(type, v, orig, qid, opts) {
   var tt = (v.P1476 || [''])[0] || '';
   var p = { action: 'wbeditentity', data: JSON.stringify(d), summary: (qid ? 'Updating ' : 'Creating ') + type + ' item: ' + tt.slice(0, 80) + SUF };
   if (qid) p.id = qid; else p.new = 'item';
-  var r = await apost(p); logEdit(r.entity.id, (qid ? 'updated ' : 'created ') + type + ' – ' + tt.slice(0, 60)); return r.entity.id;
+  var r;
+  try { r = await apost(p); }
+  catch (e) {
+    if (!qid && /same description/i.test(e.message) && d.descriptions) { delete d.descriptions; p.data = JSON.stringify(d); r = await apost(p); toast('Same label + description already exists on another item – created without a description. Add a distinguishing one.', true); }
+    else throw e;
+  }
+  logEdit(r.entity.id, (qid ? 'updated ' : 'created ') + type + ' – ' + tt.slice(0, 60)); return r.entity.id;
 }
 async function ensureLink(target, pid, val) {
   var e = (await getEnts([target], 'claims'))[target]; if (!e) return 'missing';
@@ -631,8 +637,8 @@ function paintRows() {
 function updateChanges() {
   if (!S.el.btnAll || !S.el.optMode) return; var n = 0;
   try { n = buildData(S.type, S.vals, S.orig, opts()).n; } catch (e) { n = 0; } S.pending = n;
-  S.el.btnAll.textContent = 'Update all' + (n ? ' (' + n + ' change' + (n > 1 ? 's' : '') + ')' : '');
-  S.el.chgText.textContent = S.orig ? (n ? n + ' pending change(s) compared with Wikidata' : 'no changes compared with Wikidata') : 'new item – ' + n + ' statement/label(s) will be created';
+  S.el.btnAll.textContent = S.qid ? 'Update all' + (n ? ' (' + n + ' change' + (n > 1 ? 's' : '') + ')' : '') : 'Step 1: Create item (QID + label + description)';
+  S.el.chgText.textContent = S.qid ? (S.orig && n ? n + ' pending change(s) compared with Wikidata – save property by property or use Update all' : 'no changes compared with Wikidata') : 'new item: first create the QID with label and description, then save each property with its own Save button';
 }
 async function runValidation() {
   try { collect(); updateChanges(); updateStatus('checking…'); var R = await validate(S.type, S.vals, S.orig, S.qid); S.lastR = R; renderR(S.el.res, R, S.pending); highlight(R); updateStatus(); return R; }
@@ -741,6 +747,15 @@ async function crossLinks(qid) {
   }
   return msgs;
 }
+async function doCreateStub() {
+  try {
+    collect(); var tt = (S.vals.P1476 || [''])[0].trim(), tl = S.vals.P1476_lang;
+    if (!tt || !tl) return toast('Enter the title and its language code first – they become the label.', true);
+    setStatus('creating item…'); var qid = await saveItem(S.type, S.vals, null, '', Object.assign({}, opts(), { stub: true }));
+    await afterSave(qid); S.typeLocked = true; renderNav(); renderForm();
+    toast('Created ' + qid + ' with label, description and instance of. Now save each property with its own Save button.'); await runValidation();
+  } catch (e) { fail(e); }
+}
 async function doSave() {
   try {
     if (!(await preflight())) return;
@@ -755,19 +770,17 @@ async function openCounterpart() {
   try {
     collect();
     var cur = S.type, nt = S.el.genSel.value, cross = nt !== cur, isEd = cur === 'edition';
-    if (cross) { if (!(await preflight())) return; if (isEd && (S.vals.P629 || []).length) return toast('This edition already has a work (P629).', true); }
     var dv = !cross ? deriveSame(cur, S.vals) : isEd ? deriveWork(S.vals) : deriveEdition(S.vals, null); if (cross) delete dv.P629; dv.P31 = [{ id: Q[nt] }];
     var ids = []; Object.keys(dv).forEach(function (k) { if (Array.isArray(dv[k])) dv[k].forEach(function (x) { if (x && x.id) ids.push(x.id); }); }); await ensureLabels(ids);
     var ctl = {}, ov = h('div', { class: 'ge-ov2' }), box = h('div', { class: 'ge-box ge-small' }), res = h('div'), prog = h('div', { class: 'ge-status' }, 'Not started'), grid = h('div', { class: 'ge-grid' }), btn;
     ov.appendChild(box);
     F.forEach(function (f) { if (applies(f, nt) && !f.x && f.pid !== 'P31' && f.pid !== 'P747' && !(f.pid === 'P629' && cross)) grid.appendChild(fieldRow(f, dv, ctl, true)); });
     var readDraft = function () { Object.keys(ctl).forEach(function (pd) { var f = FB[pd], v = ctl[pd].get(); if (f.dt === 'mono' || f.dt === 'price') { dv[pd] = v.text ? [v.text] : []; dv[pd + '_lang'] = v.lang; } else dv[pd] = v; }); };
-    var steps = !cross ? ['Create the new ' + nt + ' from the values below (based on the current ' + cur + ')', nt === 'edition' ? 'If a work (P629) is set: add P747 on that work → new edition' : 'No cross-link needed (standalone work)'] :
-      isEd ? ['Create the new work from the values below', 'Save this edition with P629 → new work', 'Add P747 on the new work → this edition'] :
-      ['Save this work' + (S.qid ? ' (' + S.qid + ')' : ' (new item)'), 'Create the new edition from the values below with P629 → this work', 'Add P747 on this work → new edition'];
+    var steps = ['Create the new ' + nt + ' with QID, label, description and instance of only',
+      'It opens in the editor with the values below pre-filled (blue) – save them property by property' + (cross && S.qid ? '; the link back to ' + S.qid + ' (' + (nt === 'work' ? 'P747' : 'P629') + ') is pre-filled and adds the reciprocal link when saved' : '')];
     async function check() {
       readDraft(); var R = await validate(nt, dv, null, ''); R = R.filter(function (r) { return !(cross && /^No (work|edition) linked/.test(r.m)); });
-      R.push({ l: 'i', m: cross ? 'Cross-link: ' + (isEd ? 'edition P629 ↔ work P747' : 'work P747 ↔ edition P629') + ' will be set on both items. The form is updated with the new QID after creation.' : 'New ' + nt + ' based on the current ' + cur + '; the current item is not changed.' });
+      R.push({ l: 'i', m: 'New ' + nt + ' based on the current ' + cur + '; the current item is not changed.' });
       renderR(res, R); highlight2(R); return R;
     }
     function highlight2(R) { var map = {}; R.forEach(function (r) { var q = pidOf(r.m); if (q && (r.l === 'e' || r.l === 'w') && map[q] !== 'e') map[q] = r.l; });
@@ -775,26 +788,11 @@ async function openCounterpart() {
     async function run() {
       try {
         var R = await check(); if (R.some(function (r) { return r.l === 'e'; })) return toast('Fix the errors in the pop-up first.', true);
-        btn.disabled = true; var step = function (i) { prog.textContent = 'Step ' + i + ' of ' + steps.length + ': ' + steps[i - 1]; };
-        if (!cross) {
-          step(1); var nq = await saveItem(nt, dv, null, '', opts());
-          if (nt === 'edition' && dv.P629 && dv.P629[0] && dv.P629[0].id) { step(2); await ensureLink(dv.P629[0].id, 'P747', nq); }
-          ov.remove(); toast('Created ' + nq);
-          if (confirm('Created ' + nq + '. Open it in the editor now?')) { S.rows.push({ qid: nq, type: '', vals: {}, meta: {}, status: '' }); loadRow(S.rows.length - 1); } else await runValidation();
-          return;
-        }
-        if (isEd) {
-          step(1); var wq = await saveItem('work', dv, null, '', opts());
-          S.vals.P629 = [{ id: wq }]; step(2); var eq = await saveItem('edition', S.vals, S.orig, S.qid, opts());
-          step(3); await ensureLink(wq, 'P747', eq); await ensureLabels([wq]); S.ctl.P629.set(S.vals.P629); await afterSave(eq);
-        } else {
-          step(1); var wq2 = await saveItem('work', S.vals, S.orig, S.qid, opts()); await afterSave(wq2);
-          dv.P629 = [{ id: wq2 }]; step(2); var eq2 = await saveItem('edition', dv, null, '', opts());
-          step(3); await ensureLink(wq2, 'P747', eq2);
-          if (!(S.vals.P747 || []).some(function (x) { return x.id === eq2; })) S.vals.P747 = (S.vals.P747 || []).concat([{ id: eq2 }]);
-          await ensureLabels([eq2]); S.ctl.P747.set(S.vals.P747); S.orig = (await getEnts([wq2], 'labels|descriptions|aliases|claims'))[wq2];
-        }
-        ov.remove(); toast('Created and cross-linked.'); await runValidation();
+        btn.disabled = true; prog.textContent = 'Step 1 of 2: ' + steps[0];
+        var nq = await saveItem(nt, dv, null, '', Object.assign({}, opts(), { stub: true }));
+        var rv = JSON.parse(JSON.stringify(dv)); delete rv.P31; delete rv.meta;
+        if (cross && S.qid) { if (nt === 'work') rv.P747 = [{ id: S.qid }]; else rv.P629 = [{ id: S.qid }]; }
+        ov.remove(); S.rows.push({ qid: nq, type: nt, vals: rv, meta: {}, status: '' }); toast('Created ' + nq + ' – now save its properties one by one.'); await loadRow(S.rows.length - 1);
       } catch (e) { fail(e); btn.disabled = false; }
     }
     btn = h('button', { class: 'ge-btn', onclick: run }, 'Create new ' + nt);
@@ -884,7 +882,7 @@ function buildUI() {
   S.el.form.addEventListener('change', onFormChange);
   S.el.optMode = sel([['auto', 'Auto (overwrite single-valued, add to multi-valued)'], ['add', 'Always add as additional'], ['over', 'Always overwrite']], 'auto');
   S.el.optOver = h('input', { type: 'checkbox' });
-  S.el.btnAll = h('button', { class: 'ge-btn', onclick: doSave }, 'Update all'); S.el.chgText = h('span', { class: 'ge-info' }); S.el.bar = h('div', { class: 'ge-bar' }, [S.el.btnAll, ' ', S.el.chgText]);
+  S.el.btnAll = h('button', { class: 'ge-btn', onclick: function () { if (S.qid) doSave(); else doCreateStub(); } }, 'Update all'); S.el.chgText = h('span', { class: 'ge-info' }); S.el.bar = h('div', { class: 'ge-bar' }, [S.el.btnAll, ' ', S.el.chgText]);
   S.el.genSel = sel([['work', 'Work'], ['edition', 'Edition']], 'work');
   S.el.bBasic = h('button', { class: 'ge-btn', onclick: function () { setView(false); } }, 'Basic view'); S.el.bExt = h('button', { class: 'ge-btn', onclick: function () { setView(true); } }, 'Extended view');
   S.el.typeSel = sel([['edition', 'Edition item'], ['work', 'Work item']], 'edition'); S.el.typeNote = h('span', { class: 'ge-info' });
