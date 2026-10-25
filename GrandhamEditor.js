@@ -66,6 +66,7 @@ var F = [
  { pid: 'P674', name: 'characters', dt: 'item', m: 1, col: 'character', t: 'W', x: 1 },
  { pid: 'P840', name: 'narrative location', dt: 'item', m: 1, col: 'narrative_location', t: 'W', x: 1 }
 ];
+F.forEach(function (f) { if (f.dt === 'item' && !f.create && ['P629', 'P747', 'P407', 'P495'].indexOf(f.pid) < 0) f.create = 'generic'; });
 var FB = {}, COLMAP = {}, ALIAS = { ml: Q.ml, malayalam: Q.ml, en: Q.en, english: Q.en, india: Q.india, 'british raj': Q.raj, raj: Q.raj, 'british india': Q.raj };
 F.forEach(function (f) { FB[f.pid] = f; COLMAP[f.col] = f.pid; COLMAP[f.pid.toLowerCase()] = f.pid; });
 COLMAP.subtitle_lang = 'P1680_lang'; COLMAP.title_lang = 'P1476_lang';
@@ -252,13 +253,13 @@ async function saveItem(type, v, orig, qid, opts) {
   var tt = (v.P1476 || [''])[0] || '';
   var p = { action: 'wbeditentity', data: JSON.stringify(d), summary: (qid ? 'Updating ' : 'Creating ') + type + ' item: ' + tt.slice(0, 80) + SUF };
   if (qid) p.id = qid; else p.new = 'item';
-  var r = await apost(p); return r.entity.id;
+  var r = await apost(p); logEdit(r.entity.id, (qid ? 'updated ' : 'created ') + type + ' – ' + tt.slice(0, 60)); return r.entity.id;
 }
 async function ensureLink(target, pid, val) {
   var e = (await getEnts([target], 'claims'))[target]; if (!e) return 'missing';
   var cur = cids(e, pid); if (cur.indexOf(val) > -1) return 'ok';
   if (pid === 'P629' && cur.length) return 'conflict';
-  await apost({ action: 'wbeditentity', id: target, data: JSON.stringify({ claims: [mkClaim(FB[pid], { id: val })] }), summary: 'Adding reciprocal link ' + pid + ' → ' + val + SUF });
+  await apost({ action: 'wbeditentity', id: target, data: JSON.stringify({ claims: [mkClaim(FB[pid], { id: val })] }), summary: 'Adding reciprocal link ' + pid + ' → ' + val + SUF }); logEdit(target, 'added ' + pid + ' → ' + val + ' (cross-link)');
   return 'added';
 }
 function carry(v, keys) { var o = {}; keys.forEach(function (k) { if (v[k]) o[k] = JSON.parse(JSON.stringify(v[k])); }); return o; }
@@ -352,6 +353,9 @@ mw.util.addCSS(
 mw.util.addCSS('.ge-info{font-size:11px;color:#54595d}.ge-save{flex:none;align-self:flex-start}.ge-links{margin:6px 0}' +
 '.ge-banner{padding:2px 6px;font-weight:bold;border:1px solid #a2a9b1}.ge-banner.e{background:#fee7e6;color:#d33;border-color:#d33}.ge-banner.w{background:#fef6e7;border-color:#c90}.ge-banner.o{background:#d5fdf4;border-color:#14866d}' +
 '.ge-r.e{background:#fee7e6}.ge-r.w{background:#fef6e7}.ge-err{background:#fee7e6}.ge-warn{background:#fef6e7}.ge-legend{font-size:11px;color:#54595d}');
+mw.util.addCSS('.ge-links{display:inline-block;margin:0 0 0 8px}.ge-bub{display:inline-block;padding:1px 10px;margin-right:6px;border-radius:12px;font-size:12px;text-decoration:none;border:1px solid}' +
+'.ge-bub.wd{background:#cfe2ff;border-color:#6ea8fe;color:#084298}.ge-bub.ws{background:#fff3bf;border-color:#e0b100;color:#664d03}.ge-bub.cm{background:#d1e7dd;border-color:#75b798;color:#0a3622}.ge-bub.ge-off{background:#f1f1f1;border-color:#ccc;color:#888}' +
+'.ge-log{height:14em;line-height:1.4em;overflow-y:scroll;border:1px solid #a2a9b1;padding:2px 6px;font-size:12px;background:#fff;margin-top:3px}');
 function updateStatus(task) {
   var n = S.rows.length, done = S.rows.filter(function (r) { return r.status === '✔'; }).length, R = S.lastR || [];
   var e = R.filter(function (r) { return r.l === 'e'; }).length, w = R.filter(function (r) { return r.l === 'w'; }).length;
@@ -373,7 +377,7 @@ function itemCtl(f) {
       box.appendChild(chip);
     });
   }
-  function add(id) { id = id.toUpperCase(); if (!vals.some(function (x) { return x.id === id; })) vals.push({ id: id }); draw(); ensureLabels([id]).then(draw); inp.value = ''; dd.style.display = 'none'; box.dispatchEvent(new Event('change', { bubbles: true })); }
+  function add(id) { id = id.toUpperCase(); if (!vals.some(function (x) { return x.id === id; })) vals.push({ id: id }); draw(); ensureLabels([id]).then(function () { draw(); renderLinked(); }); inp.value = ''; dd.style.display = 'none'; box.dispatchEvent(new Event('change', { bubbles: true })); }
   function search(q) {
     q = q.trim(); if (!q) { dd.style.display = 'none'; return; }
     if (/^Q\d+$/i.test(q)) return add(q);
@@ -446,8 +450,8 @@ function renderForm() {
     });
     fm.appendChild(mg);
   } else {
-    var n = extra.filter(function (f) { return (S.vals[f.pid] || []).length; }).length;
-    if (n) fm.appendChild(h('div', { class: 'ge-note' }, n + ' optional field(s) contain data – tick “Extended view” to see or edit them.'));
+    var shown = extra.filter(function (f) { return (S.vals[f.pid] || []).length; });
+    if (shown.length) { fm.appendChild(h('p', {}, h('b', {}, 'Other properties with data'))); fm.appendChild(h('div', { class: 'ge-grid' }, shown.map(function (f) { return fieldRow(f); }))); }
   }
   refreshRows(); renderLinks(); syncToolbar();
 }
@@ -627,6 +631,7 @@ function refreshRows() {
     else if (d.gone.length && d.want.length) r.info.textContent = 'Wikidata also has: ' + d.gone.map(function (k) { return dispVal(f, k); }).join(', ');
     else if (d.ek.length) r.info.textContent = '✓ same as Wikidata';
   });
+  renderLinked();
 }
 async function savePid(pid) {
   try {
@@ -636,7 +641,7 @@ async function savePid(pid) {
     var d = buildData(S.type, S.vals, S.orig, Object.assign({}, opts(), { only: pid })), n = d.n; delete d.n;
     if (!n) return toast('No change to save for ' + pid + '.');
     setStatus('saving ' + pid + '…');
-    await apost({ action: 'wbeditentity', id: S.qid, data: JSON.stringify(d), summary: 'Updating ' + pid + ' (' + f.name + ')' + SUF });
+    await apost({ action: 'wbeditentity', id: S.qid, data: JSON.stringify(d), summary: 'Updating ' + pid + ' (' + f.name + ')' + SUF }); logEdit(S.qid, 'saved ' + pid + ' (' + f.name + ')');
     if (pid === 'P629' || pid === 'P747') await crossLinks(S.qid);
     S.orig = (await getEnts([S.qid], 'labels|descriptions|aliases|claims'))[S.qid]; if (S.modes) delete S.modes[pid];
     refreshRows(); toast('Saved ' + pid + ' (' + f.name + ')'); await runValidation();
@@ -646,21 +651,35 @@ var vt;
 function onFormChange() { collect(); renderLinks(); refreshRows(); clearTimeout(vt); vt = setTimeout(runValidation, 1200); }
 function commonsUrl(n) { return 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(n.replace(/^File:/i, '').trim().replace(/ /g, '_')); }
 function renderLinks() {
-  var b = S.el.links; if (!b) return; b.innerHTML = '';
-  var a = function (href, t) { return h('a', { href: href, target: '_blank' }, t); }, v = S.vals || {}, none = function () { return h('i', {}, '—'); };
-  var parts = ['Wikidata: ', S.qid ? a('/wiki/' + S.qid, S.qid + (L(S.qid).label ? ' – ' + L(S.qid).label : '')) : h('i', {}, 'new item')];
+  var b = S.el.links; if (!b) return; b.innerHTML = ''; var v = S.vals || {};
+  var bub = function (cls, href, t, title) { return href ? h('a', { class: 'ge-bub ' + cls, href: href, target: '_blank', title: title || '' }, t) : h('span', { class: 'ge-bub ge-off', title: title || '' }, t); };
+  b.appendChild(bub('wd', S.qid ? '/wiki/' + S.qid : '', 'Wikidata · ' + (S.qid || 'new item'), (S.qid && L(S.qid).label) || ''));
   if (S.type === 'edition') {
-    var idx = (v.P1957 || [])[0], fl = (v.P996 || [])[0], u = (v.P953 || [])[0];
-    parts = parts.concat([' · Wikisource index: ', idx && /^https?:\/\//.test(idx) ? a(idx, idx.replace(/^https?:\/\//, '').slice(0, 70)) : none(),
-      ' · Commons file: ', fl ? a(commonsUrl(fl), 'File:' + fl.replace(/^File:/i, '')) : none(), ' · Digital copy: ', u && /^https?:\/\//.test(u) ? a(u, 'open') : none()]);
+    var idx = (v.P1957 || [])[0], fl = (v.P996 || [])[0];
+    b.appendChild(bub('ws', idx && /^https?:\/\//.test(idx) ? idx : '', 'WS Index', idx || 'no Wikisource index (P1957) value'));
+    b.appendChild(bub('cm', fl ? commonsUrl(fl) : '', 'Commons File', fl ? 'File:' + fl.replace(/^File:/i, '') : 'no Commons file (P996) value'));
   }
-  b.appendChild(h('span', {}, parts));
+}
+function renderLinked() {
+  var b = S.el.linked; if (!b) return; b.innerHTML = ''; var n = 0, rows = [];
+  F.forEach(function (f) {
+    if (f.dt !== 'item' || !applies(f, S.type)) return;
+    (S.vals[f.pid] || []).forEach(function (x) {
+      if (!x) return; n++;
+      rows.push(h('tr', {}, [h('td', {}, f.pid + ' ' + f.name), h('td', {}, x.id ? h('a', { href: '/wiki/' + x.id, target: '_blank' }, (L(x.id).label || x.id) + ' (' + x.id + ')') : h('span', { class: 'ge-errtxt' }, x.text + ' – not linked')), h('td', {}, x.id ? (L(x.id).desc || '') : '')]));
+    });
+  });
+  S.el.linkedHead.textContent = 'All linked items (' + n + ')'; b.appendChild(h('table', { class: 'ge-tbl' }, rows));
+}
+function logEdit(qid, what) {
+  var t = new Date().toLocaleTimeString(); S.log = S.log || []; S.log.push([t, qid, what]);
+  S.el.log.appendChild(h('div', {}, [S.log.length + '. ' + t + ' ', h('a', { href: '/wiki/' + qid, target: '_blank' }, qid), ' – ' + what]));
+  S.el.log.scrollTop = S.el.log.scrollHeight; S.el.logHead.textContent = 'Edits in this session (' + S.log.length + ')';
 }
 
 async function afterSave(qid) {
   S.qid = qid; var e = (await getEnts([qid], 'labels|descriptions|aliases|claims'))[qid]; S.orig = e;
-  var row = S.rows[S.i]; row.qid = qid; row.status = '✔'; S.el.log.appendChild(h('div', {}, [new Date().toLocaleTimeString() + ' ', h('a', { href: '/wiki/' + qid, target: '_blank' }, qid), ' ' + S.type + ' – ' + ((S.vals.P1476 || [''])[0])]));
-  S.log = (S.log || []).concat([[S.i + 1, S.type, qid, (S.vals.P1476 || [''])[0]]]);
+  var row = S.rows[S.i]; row.qid = qid; row.status = '✔';
   renderNav();
 }
 async function crossLinks(qid) {
@@ -707,14 +726,12 @@ async function openCounterpart() {
           step(1); var wq = await saveItem('work', dv, null, '', opts());
           S.vals.P629 = [{ id: wq }]; step(2); var eq = await saveItem('edition', S.vals, S.orig, S.qid, opts());
           step(3); await ensureLink(wq, 'P747', eq); await ensureLabels([wq]); S.ctl.P629.set(S.vals.P629); await afterSave(eq);
-          S.el.log.appendChild(h('div', {}, [h('a', { href: '/wiki/' + wq, target: '_blank' }, wq), ' work (generated)']));
         } else {
           step(1); var wq2 = await saveItem('work', S.vals, S.orig, S.qid, opts()); await afterSave(wq2);
           dv.P629 = [{ id: wq2 }]; step(2); var eq2 = await saveItem('edition', dv, null, '', opts());
           step(3); await ensureLink(wq2, 'P747', eq2);
           if (!(S.vals.P747 || []).some(function (x) { return x.id === eq2; })) S.vals.P747 = (S.vals.P747 || []).concat([{ id: eq2 }]);
           await ensureLabels([eq2]); S.ctl.P747.set(S.vals.P747); S.orig = (await getEnts([wq2], 'labels|descriptions|aliases|claims'))[wq2];
-          S.el.log.appendChild(h('div', {}, [h('a', { href: '/wiki/' + eq2, target: '_blank' }, eq2), ' edition (generated)']));
         }
         ov.remove(); toast('Created and cross-linked.'); await runValidation();
       } catch (e) { fail(e); btn.disabled = false; }
@@ -732,15 +749,20 @@ async function openCounterpart() {
 function sel(opts_, val) { var s = h('select', {}, opts_.map(function (o) { return h('option', { value: o[0], selected: o[0] === val }, o[1]); })); return s; }
 function openCreate(role, name, cb) {
   var ov = h('div', { class: 'ge-ov2' }), box = h('div', { class: 'ge-box ge-small' }); ov.appendChild(box);
-  var kind = sel([['author', 'Person – author'], ['editor', 'Person – editor'], ['translator', 'Person – translator'], ['publisher', 'Person – publisher'], ['printer', 'Person – printer'], ['house', 'Publishing house (organisation)'], ['press', 'Printing press (organisation)']], role);
+  var kind = sel([['author', 'Person – author'], ['editor', 'Person – editor'], ['translator', 'Person – translator'], ['publisher', 'Person – publisher'], ['printer', 'Person – printer'], ['house', 'Publishing house (organisation)'], ['press', 'Printing press (organisation)'], ['generic', 'Other item (place, collection, subject…)']], role);
   var ml = h('input', { class: 'ge-in', value: ML.test(name) ? name : '' }), en = h('input', { class: 'ge-in', value: ML.test(name) ? '' : name });
   var aml = h('input', { class: 'ge-in', placeholder: 'a|b' }), aen = h('input', { class: 'ge-in', placeholder: 'a|b' });
   var gender = sel([[Q.male, 'male'], [Q.female, 'female']], Q.male), ctry = sel([[Q.india, 'India'], [Q.raj, 'British Raj']], Q.india);
   var region = h('input', { class: 'ge-in', value: 'Kerala, India', list: 'ge-regions' });
   var dml = h('input', { class: 'ge-in' }), den = h('input', { class: 'ge-in' }), dup = h('div');
-  var isOrg = function () { return kind.value === 'house' || kind.value === 'press'; };
-  function refresh() { var d = descFor(kind.value, gender.value, region.value); den.value = d.en; dml.value = d.ml; gender.disabled = isOrg(); if (isOrg()) ctry.value = Q.india; }
-  [kind, gender, region].forEach(function (c) { c.addEventListener('change', refresh); }); region.addEventListener('input', refresh); refresh();
+  var isOrg = function () { return kind.value === 'house' || kind.value === 'press'; }, isGen = function () { return kind.value === 'generic'; };
+  var inst = h('input', { class: 'ge-in', placeholder: 'optional, e.g. Q486972 (human settlement)' }), R_ = {};
+  function refresh() {
+    if (!isGen()) { var d = descFor(kind.value, gender.value, region.value); den.value = d.en; dml.value = d.ml; }
+    gender.disabled = isOrg() || isGen(); if (isOrg()) ctry.value = Q.india;
+    ['gender', 'ctry', 'region'].forEach(function (k) { R_[k].style.display = isGen() ? 'none' : ''; }); R_.inst.style.display = isGen() ? '' : 'none';
+  }
+  [kind, gender, region].forEach(function (c) { c.addEventListener('change', refresh); }); region.addEventListener('input', refresh);
   var row = function (l, c) { return h('div', { class: 'ge-row' }, [h('div', { class: 'ge-lab' }, l), h('div', { class: 'ge-ctl' }, c)]); };
   async function create() {
     try {
@@ -749,18 +771,21 @@ function openCreate(role, name, cb) {
       if (dml.value.trim()) ds.ml = { language: 'ml', value: dml.value.trim() }; if (den.value.trim()) ds.en = { language: 'en', value: den.value.trim() };
       [['ml', aml], ['en', aen]].forEach(function (p) { var a = p[1].value.split('|').map(function (s) { return s.trim(); }).filter(Boolean); if (a.length) al[p[0]] = a.map(function (s) { return { language: p[0], value: s }; }); });
       var cl = [], P = function (pid, q) { return mkClaim({ pid: pid, dt: 'item' }, { id: q }); };
-      if (isOrg()) { cl.push(P('P31', Q[kind.value])); cl.push(P('P17', ctry.value)); } else { cl.push(P('P31', Q.human)); cl.push(P('P21', gender.value)); cl.push(P('P27', ctry.value)); }
+      if (isGen()) { var iq = (inst.value.match(/Q\d+/i) || [''])[0]; if (iq) cl.push(P('P31', iq.toUpperCase())); }
+      else if (isOrg()) { cl.push(P('P31', Q[kind.value])); cl.push(P('P17', ctry.value)); } else { cl.push(P('P31', Q.human)); cl.push(P('P21', gender.value)); cl.push(P('P27', ctry.value)); }
       var names = [en.value.trim(), ml.value.trim()].filter(Boolean), found = [];
       for (var k = 0; k < names.length; k++) { var r = await aget({ action: 'wbsearchentities', search: names[k], language: ML.test(names[k]) ? 'ml' : 'en', uselang: 'en', type: 'item', limit: 5 }); found = found.concat(r.search || []); }
       var ex = found.filter(function (x) { return names.indexOf(x.label) > -1; });
       if (ex.length && !confirm('Possible duplicates already exist:\n' + ex.map(function (x) { return x.id + ' – ' + x.label + ' – ' + (x.description || ''); }).join('\n') + '\n\nCreate a new item anyway?')) return;
       var r2 = await apost({ action: 'wbeditentity', new: 'item', data: JSON.stringify({ labels: lab, descriptions: ds, aliases: al, claims: cl }), summary: 'Creating ' + kind.value + ' item: ' + names[0] + SUF });
-      toast('Created ' + r2.entity.id); LC[r2.entity.id] = { label: en.value.trim() || ml.value.trim(), ml: ml.value.trim(), en: en.value.trim(), desc: den.value }; ov.remove(); cb(r2.entity.id);
+      logEdit(r2.entity.id, 'created ' + kind.value + ' – ' + names[0]); toast('Created ' + r2.entity.id); LC[r2.entity.id] = { label: en.value.trim() || ml.value.trim(), ml: ml.value.trim(), en: en.value.trim(), desc: den.value }; ov.remove(); cb(r2.entity.id);
     } catch (e) { fail(e); }
   }
   box.appendChild(h('h3', {}, 'Create new item'));
-  [row('Type', kind), row('Label (ml)', ml), row('Label (en)', en), row('Also known as (ml)', aml), row('Also known as (en)', aen), row('Gender (P21)', gender), row('Citizenship / country', ctry), row('Region', region),
+  R_.gender = row('Gender (P21)', gender); R_.ctry = row('Citizenship / country', ctry); R_.region = row('Region', region); R_.inst = row('Instance of (QID)', inst);
+  [row('Type', kind), row('Label (ml)', ml), row('Label (en)', en), row('Also known as (ml)', aml), row('Also known as (en)', aen), R_.gender, R_.ctry, R_.region, R_.inst,
    row('Description (ml)', dml), row('Description (en)', den)].forEach(function (r) { box.appendChild(r); });
+  refresh();
   box.appendChild(h('div', {}, [h('button', { class: 'ge-btn g', onclick: create }, 'Create item'), h('button', { class: 'ge-btn', onclick: function () { ov.remove(); } }, 'Cancel')]));
   document.body.appendChild(ov);
 }
@@ -794,7 +819,7 @@ function buildUI() {
   var file = h('input', { type: 'file', accept: '.csv,.tsv,.txt', onchange: function () { var f = file.files[0]; if (!f) return; var fr = new FileReader(); fr.onload = function () { ta.value = fr.result; load(); }; fr.readAsText(f, 'UTF-8'); } });
   function load() { try { S.rows = ingest(ta.value); S.i = -1; toast(S.rows.length + ' row(s) loaded'); loadRow(0); } catch (e) { fail(e); } }
   function newItem(type) { S.rows = [{ qid: '', type: type, vals: {}, meta: {}, status: '' }]; S.i = -1; loadRow(0); }
-  S.el.status = h('div', { class: 'ge-status' }, 'No rows loaded'); S.el.nav = h('div', { class: 'ge-nav' }); S.el.info = h('div'); S.el.form = h('div'); S.el.res = h('div'); S.el.log = h('div'); S.el.links = h('div', { class: 'ge-links' });
+  S.el.status = h('div', { class: 'ge-status' }, 'No rows loaded'); S.el.nav = h('div', { class: 'ge-nav' }); S.el.info = h('div'); S.el.form = h('div'); S.el.res = h('div'); S.el.log = h('div', { class: 'ge-log' }); S.el.logHead = h('b', {}, 'Edits in this session (0)'); S.el.links = h('span', { class: 'ge-links' }); S.el.linked = h('div'); S.el.linkedHead = h('b', {}, 'All linked items (0)');
   S.el.form.addEventListener('change', onFormChange);
   S.el.optMode = sel([['auto', 'Auto (overwrite single-valued, add to multi-valued)'], ['add', 'Always add as additional'], ['over', 'Always overwrite']], 'auto');
   S.el.optOver = h('input', { type: 'checkbox' });
@@ -807,13 +832,13 @@ function buildUI() {
     h('button', { class: 'ge-btn', onclick: runValidation }, 'Validate'), h('button', { class: 'ge-btn', onclick: doSave }, 'Update all'),
     h('button', { class: 'ge-btn', onclick: openCounterpart }, 'Generate linked work/edition…'), h('button', { class: 'ge-btn', onclick: findCounterpart }, 'Find existing work/edition'),
     h('button', { class: 'ge-btn', onclick: function () { collect(); var a = (S.vals.P957 || [])[0]; if (a && isbn10ok(a)) { setVal('P212', [toIsbn13(a)]); } else toast('Enter a valid ISBN-10 first', true); } }, 'ISBN-10 → 13'),
-    h('button', { class: 'ge-btn', onclick: function () { dl('grandham-session-log.csv', ['row,type,qid,title'].concat((S.log || []).map(function (r) { return r.map(csvCell).join(','); })).join('\r\n')); } }, 'Download session log')]),
+    h('button', { class: 'ge-btn', onclick: function () { dl('grandham-session-log.csv', ['time,qid,action'].concat((S.log || []).map(function (r) { return r.map(csvCell).join(','); })).join('\r\n')); } }, 'Download session log')]),
     h('div', {}, ['If a value differs from Wikidata: ', S.el.optMode]), h('label', {}, [S.el.optOver, ' overwrite existing labels/descriptions']),
     h('div', { class: 'ge-info' }, 'Each field has its own Save button (saves that property only); “Update all” saves every field in one edit.')]);
   var box = h('div', { class: 'ge-box' }, [
     h('div', {}, h('b', { style: 'font-size:120%' }, 'Grandham Editor')),
-    load_, S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel]), S.el.links, S.el.info,
-    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [acts, h('hr'), h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · plain = note · green = all clear'), S.el.res, h('hr'), h('b', {}, 'Saved this session'), S.el.log])])]);
+    load_, S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel, S.el.links]), S.el.info,
+    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [acts, h('hr'), h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · plain = note · green = all clear'), S.el.res, h('hr'), S.el.linkedHead, S.el.linked])]), h('div', { style: 'margin-top:10px' }, [S.el.logHead, ' (latest at bottom)', S.el.log])]);
   S.el.ov = h('div', { class: 'ge-page' }, box); document.body.appendChild(S.el.ov); document.body.appendChild(dl_); document.body.appendChild(rg);
 }
 var PAGE = 'Special:BlankPage/GrandhamEditor';
