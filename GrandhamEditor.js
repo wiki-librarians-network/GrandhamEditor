@@ -219,7 +219,7 @@ function buildData(type, v, orig, opts) {
   opts = opts || {};
   var data = { claims: [] }, ol = (orig && orig.labels) || {}, od = (orig && orig.descriptions) || {}, oa = (orig && orig.aliases) || {};
   var meta = v.meta || {}, tt = ((v.P1476 || [''])[0] || '').trim(), tl = v.P1476_lang, ad = autoDescs(type, v);
-  ['ml', 'en'].forEach(function (l) {
+  if (!opts.only) ['ml', 'en'].forEach(function (l) {
     var lab = (meta['label_' + l] || '').trim() || (tl === l ? tt : '');
     if (lab && (!ol[l] || (opts.over && ol[l].value !== lab))) (data.labels = data.labels || {})[l] = { language: l, value: lab };
     var d = (meta['desc_' + l] || '').trim() || ad[l];
@@ -229,20 +229,21 @@ function buildData(type, v, orig, opts) {
     if (al.length) (data.aliases = data.aliases || {})[l] = al.map(function (s) { return { language: l, value: s, add: '' }; });
   });
   var t31 = FB.P31 || { pid: 'P31', dt: 'item' };
-  if (!orig || p31(orig).indexOf(Q[type]) < 0) data.claims.push(mkClaim(t31, { id: Q[type] }));
+  if (!opts.only && (!orig || p31(orig).indexOf(Q[type]) < 0)) data.claims.push(mkClaim(t31, { id: Q[type] }));
   F.forEach(function (f) {
-    if (!applies(f, type)) return;
+    if (!applies(f, type) || (opts.only && f.pid !== opts.only)) return;
     var lang = v[f.pid + '_lang'], want = (v[f.pid] || []).filter(function (x) { return f.dt === 'item' ? x.id : String(x).trim(); });
     var ex = ((orig && orig.claims) || {})[f.pid] || [];
     var wk = {}; want.forEach(function (x) { wk[normForm(f, x, lang)] = x; });
     var ek = ex.map(function (c) { return normClaim(f, c); });
-    if (!f.m && ex.length === 1 && want.length === 1 && ek[0] !== null && ek[0] !== normForm(f, want[0], lang)) { // single-valued: update in place
+    var mode = (opts.modes && opts.modes[f.pid]) || opts.mode || 'auto'; if (mode === 'auto') mode = f.m ? 'add' : 'over';
+    if (mode === 'over' && !f.m && ex.length === 1 && want.length === 1 && ek[0] !== null && ek[0] !== normForm(f, want[0], lang)) { // overwrite single value in place
       data.claims.push(mkClaim(f, want[0], lang, ex[0].id)); return;
     }
     want.forEach(function (x) { if (ek.indexOf(normForm(f, x, lang)) < 0) data.claims.push(mkClaim(f, x, lang)); });
-    if (opts.remove) ex.forEach(function (c, i) { if (ek[i] !== null && !(ek[i] in wk)) data.claims.push({ id: c.id, remove: '' }); });
+    if (mode === 'over' && want.length) ex.forEach(function (c, i) { if (ek[i] !== null && !(ek[i] in wk)) data.claims.push({ id: c.id, remove: '' }); });
   });
-  data.n = data.claims.length + Object.keys(data.labels || {}).length + Object.keys(data.descriptions || {}).length + Object.keys(data.aliases || {}).length;
+    data.n = data.claims.length + Object.keys(data.labels || {}).length + Object.keys(data.descriptions || {}).length + Object.keys(data.aliases || {}).length;
   return data;
 }
 async function saveItem(type, v, orig, qid, opts) {
@@ -348,6 +349,9 @@ mw.util.addCSS(
 '.ge-toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#202122;color:#fff;padding:6px 12px;z-index:3000;max-width:80vw}.ge-toast.ge-bad{background:#d33}' +
 '.ge-ta{width:100%;height:60px;box-sizing:border-box;font-family:monospace}.ge-tbl{border-collapse:collapse;font-size:12px}.ge-tbl td,.ge-tbl th{border:1px solid #c8ccd1;padding:2px 5px;vertical-align:top}');
 
+mw.util.addCSS('.ge-info{font-size:11px;color:#54595d}.ge-save{flex:none;align-self:flex-start}.ge-links{margin:6px 0}' +
+'.ge-banner{padding:2px 6px;font-weight:bold;border:1px solid #a2a9b1}.ge-banner.e{background:#fee7e6;color:#d33;border-color:#d33}.ge-banner.w{background:#fef6e7;border-color:#c90}.ge-banner.o{background:#d5fdf4;border-color:#14866d}' +
+'.ge-r.e{background:#fee7e6}.ge-r.w{background:#fef6e7}.ge-err{background:#fee7e6}.ge-warn{background:#fef6e7}.ge-legend{font-size:11px;color:#54595d}');
 function updateStatus(task) {
   var n = S.rows.length, done = S.rows.filter(function (r) { return r.status === '✔'; }).length, R = S.lastR || [];
   var e = R.filter(function (r) { return r.l === 'e'; }).length, w = R.filter(function (r) { return r.l === 'w'; }).length;
@@ -363,13 +367,13 @@ function itemCtl(f) {
   function draw() {
     box.innerHTML = '';
     vals.forEach(function (x, ix) {
-      var rm = h('b', { onclick: function (ev) { ev.stopPropagation(); vals.splice(ix, 1); draw(); } }, '×'), chip;
+      var rm = h('b', { onclick: function (ev) { ev.stopPropagation(); vals.splice(ix, 1); draw(); box.dispatchEvent(new Event('change', { bubbles: true })); } }, '×'), chip;
       if (x.id) chip = h('span', { class: 'ge-chip', title: L(x.id).desc || '' }, [h('a', { href: '/wiki/' + x.id, target: '_blank' }, (L(x.id).missing ? '⚠ ' : '') + (L(x.id).label || x.id) + ' (' + x.id + ')'), rm]);
       else chip = h('span', { class: 'ge-chip ge-un', title: 'Not linked – click to search', onclick: function () { vals.splice(ix, 1); draw(); inp.value = x.text; search(x.text); } }, [x.text, rm]);
       box.appendChild(chip);
     });
   }
-  function add(id) { id = id.toUpperCase(); if (!vals.some(function (x) { return x.id === id; })) vals.push({ id: id }); draw(); ensureLabels([id]).then(draw); inp.value = ''; dd.style.display = 'none'; }
+  function add(id) { id = id.toUpperCase(); if (!vals.some(function (x) { return x.id === id; })) vals.push({ id: id }); draw(); ensureLabels([id]).then(draw); inp.value = ''; dd.style.display = 'none'; box.dispatchEvent(new Event('change', { bubbles: true })); }
   function search(q) {
     q = q.trim(); if (!q) { dd.style.display = 'none'; return; }
     if (/^Q\d+$/i.test(q)) return add(q);
@@ -410,16 +414,24 @@ function collect() {
   });
   S.vals.meta = S.vals.meta || {}; Object.keys(S.mctl).forEach(function (k) { S.vals.meta[k] = S.mctl[k].value; });
 }
-function setVal(pid, arr) { S.vals[pid] = arr; if (S.ctl[pid]) S.ctl[pid].set(arr); }
+function setVal(pid, arr) { S.vals[pid] = arr; if (S.ctl[pid]) S.ctl[pid].set(arr); onFormChange(); }
 
 function fieldRow(f, vals, ctl, popup) {
   vals = vals || S.vals; ctl = ctl || S.ctl;
   var c = makeCtl(popup ? Object.assign({}, f, { find: 0 }) : f); ctl[f.pid] = c;
   if (f.dt === 'mono') c.set(vals[f.pid], vals[f.pid + '_lang']); else c.set(vals[f.pid]);
-  return h('div', { class: 'ge-row', 'data-pid': f.pid }, [h('div', { class: 'ge-lab' }, [h('a', { href: '/wiki/Property:' + f.pid, target: '_blank' }, f.pid), ' ' + f.name, f.hint ? h('small', {}, f.hint) : null]), h('div', { class: 'ge-ctl' }, c.el)]);
+  var cell = [c.el];
+  if (!popup) {
+    var info = h('span'), mode = h('select', { style: 'display:none', onchange: function () { S.modes = S.modes || {}; if (mode.value === 'auto') delete S.modes[f.pid]; else S.modes[f.pid] = mode.value; } },
+      [h('option', { value: 'auto' }, 'default'), h('option', { value: 'add' }, 'Add as additional'), h('option', { value: 'over' }, 'Overwrite')]);
+    S.rowEl[f.pid] = { info: info, mode: mode }; cell.push(h('div', { class: 'ge-info' }, [info, mode]));
+  }
+  var kids = [h('div', { class: 'ge-lab' }, [h('a', { href: '/wiki/Property:' + f.pid, target: '_blank' }, f.pid), ' ' + f.name, f.hint ? h('small', {}, f.hint) : null]), h('div', { class: 'ge-ctl' }, cell)];
+  if (!popup) kids.push(h('button', { class: 'ge-btn ge-save', type: 'button', title: 'Save only ' + f.pid + ' to Wikidata', onclick: function () { savePid(f.pid); } }, 'Save'));
+  return h('div', { class: 'ge-row', 'data-pid': f.pid }, kids);
 }
 function renderForm() {
-  var fm = S.el.form; fm.innerHTML = ''; S.ctl = {}; S.mctl = {};
+  var fm = S.el.form; fm.innerHTML = ''; S.ctl = {}; S.mctl = {}; S.rowEl = {};
   var main = [], extra = [];
   F.forEach(function (f) { if (applies(f, S.type)) (f.x ? extra : main).push(f); });
   fm.appendChild(h('div', { class: 'ge-grid' }, main.map(function (f) { return fieldRow(f); })));
@@ -437,6 +449,7 @@ function renderForm() {
     var n = extra.filter(function (f) { return (S.vals[f.pid] || []).length; }).length;
     if (n) fm.appendChild(h('div', { class: 'ge-note' }, n + ' optional field(s) contain data – tick “Extended view” to see or edit them.'));
   }
+  refreshRows(); renderLinks(); syncToolbar();
 }
 function autoFill() {
   collect(); var d = autoDescs(S.type, S.vals); if (d.en) S.mctl.desc_en.value = d.en; if (d.ml) S.mctl.desc_ml.value = d.ml;
@@ -445,32 +458,33 @@ function autoFill() {
 }
 
 /* ----- navigation ----- */
+function syncToolbar() {
+  if (!S.el.bBasic) return; S.el.bBasic.style.fontWeight = S.ext ? 'normal' : 'bold'; S.el.bExt.style.fontWeight = S.ext ? 'bold' : 'normal';
+  S.el.bBasic.disabled = !S.ext; S.el.bExt.disabled = !!S.ext; S.el.typeSel.value = S.type;
+}
+function setView(ext) { collect(); S.ext = ext; renderForm(); }
 function renderNav() {
   var n = S.el.nav; n.innerHTML = '';
-  if (!S.rows.length) { updateStatus(); return; }
-  var sel = h('select', { onchange: function () { loadRow(+sel.value); } }, S.rows.map(function (r, i) {
-    var t = ((r.vals.P1476 || [''])[0]) || ''; return h('option', { value: i, selected: i === S.i }, (i + 1) + '. ' + (r.qid || '(new)') + ' ' + t.slice(0, 30) + (r.status ? ' ' + r.status : '')); }));
-  var ts = h('select', { onchange: function () { collect(); S.type = ts.value; renderForm(); } }, [h('option', { value: 'edition', selected: S.type === 'edition' }, 'Edition item'), h('option', { value: 'work', selected: S.type === 'work' }, 'Work item')]);
-  var ex = h('input', { type: 'checkbox', onchange: function () { collect(); S.ext = ex.checked; renderForm(); } }); ex.checked = !!S.ext;
-  n.appendChild(h('button', { class: 'ge-btn', onclick: function () { go(-1); } }, '◀ Prev'));
-  n.appendChild(sel); n.appendChild(h('button', { class: 'ge-btn', onclick: function () { go(1); } }, 'Next ▶'));
-  n.appendChild(h('span', {}, 'Type:')); n.appendChild(ts); n.appendChild(h('label', {}, [ex, ' Extended view']));
-  n.appendChild(S.qid ? h('a', { href: '/wiki/' + S.qid, target: '_blank' }, S.qid + (S.orig ? ' – ' + (L(S.qid).label || '') : '')) : h('i', {}, 'new item (not yet created)'));
-  updateStatus();
+  if (S.rows.length) {
+    var sel = h('select', { onchange: function () { loadRow(+sel.value); } }, S.rows.map(function (r, i) {
+      var t = ((r.vals.P1476 || [''])[0]) || ''; return h('option', { value: i, selected: i === S.i }, (i + 1) + '. ' + (r.qid || '(new)') + ' ' + t.slice(0, 30) + (r.status ? ' ' + r.status : '')); }));
+    n.appendChild(h('button', { class: 'ge-btn', onclick: function () { go(-1); } }, '◀ Prev')); n.appendChild(sel); n.appendChild(h('button', { class: 'ge-btn', onclick: function () { go(1); } }, 'Next ▶'));
+  }
+  renderLinks(); syncToolbar(); updateStatus();
 }
 function go(d) { var i = S.i + d; if (i >= 0 && i < S.rows.length) loadRow(i); }
 
 async function loadRow(i) {
   try {
     if (S.i >= 0 && S.rows[S.i] && S.ctl.P1476) collect();
-    S.i = i; var r = S.rows[i]; setStatus('Loading…'); S.qid = r.qid; S.orig = null; S.vals = {}; S.el.res.innerHTML = ''; S.el.info.innerHTML = ''; S.lastR = null;
+    S.i = i; var r = S.rows[i]; setStatus('Loading…'); S.qid = r.qid; S.orig = null; S.vals = {}; S.el.res.innerHTML = ''; S.el.info.innerHTML = ''; S.lastR = null; S.modes = {};
     if (r.qid) {
       var e = (await getEnts([r.qid], 'labels|descriptions|aliases|claims'))[r.qid];
       if (!e || e.missing !== undefined) { S.qid = ''; S.el.info.appendChild(h('div', { class: 'ge-r e' }, r.qid + ' does not exist.')); }
       else {
         S.orig = e; S.vals = entityToVals(e); var dt = detectType(e);
         if (dt) S.type = dt; else { S.type = r.type === 'work' ? 'work' : 'edition'; S.el.info.appendChild(h('div', { class: 'ge-r w' }, 'Could not detect type from P31 = ' + (p31(e).join(', ') || 'none') + '. Choose the type manually.')); }
-        await ensureLabels(p31(e));
+        await ensureLabels(p31(e)); await ensureLabels([].concat.apply([], F.filter(function (f) { return f.dt === 'item'; }).map(function (f) { return cids(e, f.pid); })));
         S.el.info.appendChild(h('div', { class: 'ge-r i' }, 'Loaded ' + r.qid + ' · P31: ' + p31(e).map(function (q) { return (L(q).label || q) + ' (' + q + ')'; }).join(', ')));
       }
     } else S.type = r.type === 'work' ? 'work' : 'edition';
@@ -556,7 +570,7 @@ async function validate(type, v, orig, qid) {
 }
 function renderR(box, R) {
   box.innerHTML = ''; var c = { e: 0, w: 0, i: 0 }; R.forEach(function (r) { if (c[r.l] !== undefined) c[r.l]++; });
-  box.appendChild(h('div', {}, h('b', {}, 'Errors ' + c.e + ' · Warnings ' + c.w + ' · Notes ' + c.i)));
+  box.appendChild(h('div', { class: 'ge-banner ' + (c.e ? 'e' : c.w ? 'w' : 'o') }, (c.e ? 'RED – ' : c.w ? 'AMBER – ' : 'GREEN – ') + 'errors ' + c.e + ' · warnings ' + c.w + ' · notes ' + c.i));
   R.slice().sort(function (a, b) { return 'ewio'.indexOf(a.l) - 'ewio'.indexOf(b.l); }).forEach(function (r) { box.appendChild(h('div', { class: 'ge-r ' + r.l }, r.m)); });
 }
 var KEYP = [[/^Title|^Invalid title/, 'P1476'], [/^Subtitle/, 'P1680'], [/ISBN-10/, 'P957'], [/ISBN-13/, 'P212'], [/OCLC/, 'P243'], [/Open Library/, 'P648'], [/^Edition number/, 'P393'], [/^Publisher/, 'P123'],
@@ -596,7 +610,53 @@ async function preflight(skipP629) {
   var R = await runValidation(), errs = R.filter(function (r) { return r.l === 'e'; });
   if (errs.length) { toast(errs.length + ' error(s) – fix them first.', true); return false; } return true;
 }
-function opts() { return { remove: S.el.optRemove.checked, over: S.el.optOver.checked }; }
+function opts() { return { mode: S.el.optMode.value, over: S.el.optOver.checked, modes: S.modes || {} }; }
+function diffOf(pid) {
+  var f = FB[pid], ex = ((S.orig && S.orig.claims) || {})[pid] || [], lang = S.vals[pid + '_lang'];
+  var ek = ex.map(function (c) { return normClaim(f, c); }).filter(function (x) { return x !== null; });
+  var want = (S.vals[pid] || []).filter(function (x) { return f.dt === 'item' ? x && x.id : String(x).trim(); }).map(function (x) { return normForm(f, x, lang); });
+  return { ek: ek, want: want, add: want.filter(function (k) { return ek.indexOf(k) < 0; }), gone: ek.filter(function (k) { return want.indexOf(k) < 0; }) };
+}
+function dispVal(f, k) { return f.dt === 'item' ? (L(k).label || k) + ' (' + k + ')' : f.dt === 'mono' ? k.split('|').slice(1).join('|') : k; }
+function refreshRows() {
+  Object.keys(S.rowEl || {}).forEach(function (pid) {
+    var r = S.rowEl[pid], f = FB[pid], d = diffOf(pid); r.info.textContent = ''; r.mode.style.display = 'none';
+    if (!S.orig) return;
+    if (d.add.length && d.ek.length) { r.info.textContent = 'On Wikidata: ' + d.ek.map(function (k) { return dispVal(f, k); }).join(', ') + ' – differs → '; r.mode.style.display = ''; r.mode.value = (S.modes || {})[pid] || 'auto'; }
+    else if (d.add.length) r.info.textContent = 'not on Wikidata yet';
+    else if (d.gone.length && d.want.length) r.info.textContent = 'Wikidata also has: ' + d.gone.map(function (k) { return dispVal(f, k); }).join(', ');
+    else if (d.ek.length) r.info.textContent = '✓ same as Wikidata';
+  });
+}
+async function savePid(pid) {
+  try {
+    collect(); if (!S.qid) return toast('Item not created yet – use “Update all” first.', true);
+    var f = FB[pid], R = await validate(S.type, S.vals, S.orig, S.qid), bad = R.filter(function (r) { return r.l === 'e' && pidOf(r.m) === pid; });
+    if (bad.length) { renderR(S.el.res, R); highlight(R); return toast(bad[0].m, true); }
+    var d = buildData(S.type, S.vals, S.orig, Object.assign({}, opts(), { only: pid })), n = d.n; delete d.n;
+    if (!n) return toast('No change to save for ' + pid + '.');
+    setStatus('saving ' + pid + '…');
+    await apost({ action: 'wbeditentity', id: S.qid, data: JSON.stringify(d), summary: 'Updating ' + pid + ' (' + f.name + ')' + SUF });
+    if (pid === 'P629' || pid === 'P747') await crossLinks(S.qid);
+    S.orig = (await getEnts([S.qid], 'labels|descriptions|aliases|claims'))[S.qid]; if (S.modes) delete S.modes[pid];
+    refreshRows(); toast('Saved ' + pid + ' (' + f.name + ')'); await runValidation();
+  } catch (e) { fail(e); }
+}
+var vt;
+function onFormChange() { collect(); renderLinks(); refreshRows(); clearTimeout(vt); vt = setTimeout(runValidation, 1200); }
+function commonsUrl(n) { return 'https://commons.wikimedia.org/wiki/File:' + encodeURIComponent(n.replace(/^File:/i, '').trim().replace(/ /g, '_')); }
+function renderLinks() {
+  var b = S.el.links; if (!b) return; b.innerHTML = '';
+  var a = function (href, t) { return h('a', { href: href, target: '_blank' }, t); }, v = S.vals || {}, none = function () { return h('i', {}, '—'); };
+  var parts = ['Wikidata: ', S.qid ? a('/wiki/' + S.qid, S.qid + (L(S.qid).label ? ' – ' + L(S.qid).label : '')) : h('i', {}, 'new item')];
+  if (S.type === 'edition') {
+    var idx = (v.P1957 || [])[0], fl = (v.P996 || [])[0], u = (v.P953 || [])[0];
+    parts = parts.concat([' · Wikisource index: ', idx && /^https?:\/\//.test(idx) ? a(idx, idx.replace(/^https?:\/\//, '').slice(0, 70)) : none(),
+      ' · Commons file: ', fl ? a(commonsUrl(fl), 'File:' + fl.replace(/^File:/i, '')) : none(), ' · Digital copy: ', u && /^https?:\/\//.test(u) ? a(u, 'open') : none()]);
+  }
+  b.appendChild(h('span', {}, parts));
+}
+
 async function afterSave(qid) {
   S.qid = qid; var e = (await getEnts([qid], 'labels|descriptions|aliases|claims'))[qid]; S.orig = e;
   var row = S.rows[S.i]; row.qid = qid; row.status = '✔'; S.el.log.appendChild(h('div', {}, [new Date().toLocaleTimeString() + ' ', h('a', { href: '/wiki/' + qid, target: '_blank' }, qid), ' ' + S.type + ' – ' + ((S.vals.P1476 || [''])[0])]));
@@ -734,21 +794,26 @@ function buildUI() {
   var file = h('input', { type: 'file', accept: '.csv,.tsv,.txt', onchange: function () { var f = file.files[0]; if (!f) return; var fr = new FileReader(); fr.onload = function () { ta.value = fr.result; load(); }; fr.readAsText(f, 'UTF-8'); } });
   function load() { try { S.rows = ingest(ta.value); S.i = -1; toast(S.rows.length + ' row(s) loaded'); loadRow(0); } catch (e) { fail(e); } }
   function newItem(type) { S.rows = [{ qid: '', type: type, vals: {}, meta: {}, status: '' }]; S.i = -1; loadRow(0); }
-  S.el.status = h('div', { class: 'ge-status' }, 'No rows loaded'); S.el.nav = h('div', { class: 'ge-nav' }); S.el.info = h('div'); S.el.form = h('div'); S.el.res = h('div'); S.el.log = h('div');
-  S.el.optRemove = h('input', { type: 'checkbox' }); S.el.optOver = h('input', { type: 'checkbox' });
+  S.el.status = h('div', { class: 'ge-status' }, 'No rows loaded'); S.el.nav = h('div', { class: 'ge-nav' }); S.el.info = h('div'); S.el.form = h('div'); S.el.res = h('div'); S.el.log = h('div'); S.el.links = h('div', { class: 'ge-links' });
+  S.el.form.addEventListener('change', onFormChange);
+  S.el.optMode = sel([['auto', 'Auto (overwrite single-valued, add to multi-valued)'], ['add', 'Always add as additional'], ['over', 'Always overwrite']], 'auto');
+  S.el.optOver = h('input', { type: 'checkbox' });
+  S.el.bBasic = h('button', { class: 'ge-btn', onclick: function () { setView(false); } }, 'Basic view'); S.el.bExt = h('button', { class: 'ge-btn', onclick: function () { setView(true); } }, 'Extended view');
+  S.el.typeSel = sel([['edition', 'Edition item'], ['work', 'Work item']], 'edition'); S.el.typeSel.addEventListener('change', function () { collect(); S.type = S.el.typeSel.value; renderForm(); });
   var load_ = h('details', { open: true }, [h('summary', {}, 'Input (QID list or CSV/TSV master sheet)'), ta, h('div', {}, [file,
     h('button', { class: 'ge-btn', onclick: load }, 'Load rows'), h('button', { class: 'ge-btn', onclick: function () { newItem('work'); } }, 'Blank work'), h('button', { class: 'ge-btn', onclick: function () { newItem('edition'); } }, 'Blank edition'),
     h('button', { class: 'ge-btn', onclick: function () { dl('grandham-master-sample.csv', sampleCsv()); } }, 'Sample master CSV'), h('button', { class: 'ge-btn', onclick: batchQC }, 'Batch QC of all QIDs')])]);
   var acts = h('div', {}, [h('b', {}, 'Actions (one item at a time)'), h('div', {}, [
-    h('button', { class: 'ge-btn', onclick: runValidation }, 'Validate'), h('button', { class: 'ge-btn', onclick: doSave }, 'Save this item'),
+    h('button', { class: 'ge-btn', onclick: runValidation }, 'Validate'), h('button', { class: 'ge-btn', onclick: doSave }, 'Update all'),
     h('button', { class: 'ge-btn', onclick: openCounterpart }, 'Generate linked work/edition…'), h('button', { class: 'ge-btn', onclick: findCounterpart }, 'Find existing work/edition'),
     h('button', { class: 'ge-btn', onclick: function () { collect(); var a = (S.vals.P957 || [])[0]; if (a && isbn10ok(a)) { setVal('P212', [toIsbn13(a)]); } else toast('Enter a valid ISBN-10 first', true); } }, 'ISBN-10 → 13'),
     h('button', { class: 'ge-btn', onclick: function () { dl('grandham-session-log.csv', ['row,type,qid,title'].concat((S.log || []).map(function (r) { return r.map(csvCell).join(','); })).join('\r\n')); } }, 'Download session log')]),
-    h('label', {}, [S.el.optRemove, ' remove values missing from form']), h('br'), h('label', {}, [S.el.optOver, ' overwrite existing labels/descriptions'])]);
+    h('div', {}, ['If a value differs from Wikidata: ', S.el.optMode]), h('label', {}, [S.el.optOver, ' overwrite existing labels/descriptions']),
+    h('div', { class: 'ge-info' }, 'Each field has its own Save button (saves that property only); “Update all” saves every field in one edit.')]);
   var box = h('div', { class: 'ge-box' }, [
-    h('div', {}, [h('b', { style: 'font-size:120%' }, 'Grandham Editor'), ' – WikiProject Books · Sahya Digital Conservation Foundation · Wiki Librarians Network']),
-    load_, S.el.status, S.el.nav, S.el.info,
-    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [acts, h('hr'), h('b', {}, 'Quality check'), S.el.res, h('hr'), h('b', {}, 'Saved this session'), S.el.log])])]);
+    h('div', {}, h('b', { style: 'font-size:120%' }, 'Grandham Editor')),
+    load_, S.el.status, S.el.nav, h('div', { class: 'ge-nav' }, [S.el.bBasic, S.el.bExt, ' Type: ', S.el.typeSel]), S.el.links, S.el.info,
+    h('div', { class: 'ge-cols' }, [h('div', { class: 'ge-left' }, S.el.form), h('div', { class: 'ge-right' }, [acts, h('hr'), h('b', {}, 'Quality check'), h('div', { class: 'ge-legend' }, 'Red = error (blocks saving) · Amber = warning · plain = note · green = all clear'), S.el.res, h('hr'), h('b', {}, 'Saved this session'), S.el.log])])]);
   S.el.ov = h('div', { class: 'ge-page' }, box); document.body.appendChild(S.el.ov); document.body.appendChild(dl_); document.body.appendChild(rg);
 }
 var PAGE = 'Special:BlankPage/GrandhamEditor';
@@ -758,7 +823,7 @@ function mountPage() {
   var hd = document.getElementById('firstHeading'); if (hd) hd.textContent = 'Grandham Editor';
   c.innerHTML = ''; buildUI(); c.appendChild(S.el.ov);
   var q = new URLSearchParams(location.search), ids = q.get('qid') || q.get('ids');
-  if (ids) { try { S.rows = ingest(ids); S.i = -1; loadRow(0); } catch (e) { fail(e); } }
+  try { S.rows = ids ? ingest(ids) : [{ qid: '', type: 'edition', vals: {}, meta: {}, status: '' }]; S.i = -1; loadRow(0); } catch (e) { fail(e); }
 }
 var pn = mw.config.get('wgPageName') || '';
 if (pn.toLowerCase() === PAGE.toLowerCase()) $(mountPage);
